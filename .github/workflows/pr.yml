@@ -44,17 +44,23 @@ jobs:
         run: |
           missing=0
 
-          # Check all workspace package.json files are copied (exclude dev-only packages)
-          for pkg in $(find packages server ui cli -maxdepth 3 -name package.json -not -path '*/examples/*' -not -path '*/create-paperclip-plugin/*' -not -path '*/node_modules/*' | sort); do
+          # Extract only the deps stage from the Dockerfile
+          deps_stage="$(awk '/^FROM .* AS deps$/{found=1; next} found && /^FROM /{exit} found{print}' Dockerfile)"
+
+          # Derive workspace search roots from pnpm-workspace.yaml (exclude dev-only packages)
+          search_roots="$(grep '^ *- ' pnpm-workspace.yaml | sed 's/^ *- //' | sed 's/\*$//' | grep -v 'examples' | grep -v 'create-paperclip-plugin' | tr '\n' ' ')"
+
+          # Check all workspace package.json files are copied in the deps stage
+          for pkg in $(find $search_roots -maxdepth 2 -name package.json -not -path '*/examples/*' -not -path '*/create-paperclip-plugin/*' -not -path '*/node_modules/*' 2>/dev/null | sort); do
             dir="$(dirname "$pkg")"
-            if ! grep -q "COPY ${dir}/package.json" Dockerfile; then
+            if ! echo "$deps_stage" | grep -q "COPY ${dir}/package.json"; then
               echo "::error::Dockerfile deps stage missing: COPY ${pkg} ${dir}/"
               missing=1
             fi
           done
 
           # Check patches directory is copied if it exists
-          if [ -d patches ] && ! grep -q 'COPY patches/' Dockerfile; then
+          if [ -d patches ] && ! echo "$deps_stage" | grep -q 'COPY patches/'; then
             echo "::error::Dockerfile deps stage missing: COPY patches/ patches/"
             missing=1
           fi
