@@ -50,6 +50,11 @@ jobs:
           # Derive workspace search roots from pnpm-workspace.yaml (exclude dev-only packages)
           search_roots="$(grep '^ *- ' pnpm-workspace.yaml | sed 's/^ *- //' | sed 's/\*$//' | grep -v 'examples' | grep -v 'create-paperclip-plugin' | tr '\n' ' ')"
 
+          if [ -z "$search_roots" ]; then
+            echo "::error::Could not derive workspace roots from pnpm-workspace.yaml"
+            exit 1
+          fi
+
           # Check all workspace package.json files are copied in the deps stage
           for pkg in $(find $search_roots -maxdepth 2 -name package.json -not -path '*/examples/*' -not -path '*/create-paperclip-plugin/*' -not -path '*/node_modules/*' 2>/dev/null | sort); do
             dir="$(dirname "$pkg")"
