@@ -15,7 +15,9 @@ import {
   applyPendingMigrations,
   reconcilePendingMigrationHistory,
   formatDatabaseBackupResult,
+  formatFullBackupResult,
   runDatabaseBackup,
+  runFullBackup,
   authUsers,
   companies,
   companyMemberships,
@@ -30,6 +32,46 @@ import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineSe
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import {
+  resolvePaperclipInstanceRoot,
+  resolveDefaultSecretsKeyFilePath,
+  resolveDefaultStorageDir,
+} from "./home-paths.js";
+import path from "node:path";
+
+// Global backup state — shared with the backup API routes
+export type BackupSchedulerState = {
+  intervalMs: number;
+  runNow: () => Promise<void>;
+  isInFlight: () => boolean;
+};
+export type BackupLastResult = {
+  backupDir: string;
+  dbSizeBytes: number;
+  filesSizeBytes: number;
+  totalSizeBytes: number;
+  prunedCount: number;
+  includedDirs: string[];
+  completedAt: Date;
+};
+export type BackupLastError = {
+  message: string;
+  occurredAt: Date;
+};
+export type BackupConfigSnapshot = {
+  enabled: boolean;
+  intervalMinutes: number;
+  compression: boolean;
+  backupDir: string;
+  gfsEnabled: boolean;
+  gfsHourlyCount: number;
+  gfsDailyCount: number;
+  gfsWeeklyCount: number;
+};
+export let globalBackupScheduler: BackupSchedulerState | null = null;
+export let globalLastBackupResult: BackupLastResult | null = null;
+export let globalLastBackupError: BackupLastError | null = null;
+export let globalBackupConfig: BackupConfigSnapshot | null = null;
 
 type BetterAuthSessionUser = {
   id: string;
@@ -54,6 +96,7 @@ type EmbeddedPostgresCtor = new (opts: {
   password: string;
   port: number;
   persistent: boolean;
+  createPostgresUser?: boolean;
   initdbFlags?: string[];
   onLog?: (message: unknown) => void;
   onError?: (message: unknown) => void;
@@ -490,6 +533,15 @@ export async function startServer(): Promise<StartedServer> {
     companyDeletionEnabled: config.companyDeletionEnabled,
     betterAuthHandler,
     resolveSession,
+    backupOpts: config.databaseBackupEnabled ? {
+      backupDir: config.databaseBackupDir,
+      connectionString: activeDatabaseConnectionString,
+      instanceRoot: resolvePaperclipInstanceRoot(),
+      getScheduler: () => globalBackupScheduler,
+      getLastResult: () => globalLastBackupResult,
+      getLastError: () => globalLastBackupError,
+      getConfig: () => globalBackupConfig,
+    } : undefined,
   });
   const server = createServer(app as unknown as Parameters<typeof createServer>[0]);
   
@@ -570,48 +622,94 @@ export async function startServer(): Promise<StartedServer> {
     }, config.heartbeatSchedulerIntervalMs);
   }
   
+  // Global backup state — read by the backup status API route
+  globalBackupConfig = {
+    enabled: config.databaseBackupEnabled,
+    intervalMinutes: config.databaseBackupIntervalMinutes,
+    compression: config.databaseBackupCompression,
+    backupDir: config.databaseBackupDir,
+    gfsEnabled: config.databaseBackupGfsEnabled,
+    gfsHourlyCount: config.databaseBackupGfsHourlyCount,
+    gfsDailyCount: config.databaseBackupGfsDailyCount,
+    gfsWeeklyCount: config.databaseBackupGfsWeeklyCount,
+  };
+
   if (config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;
-  
+    const instanceRoot = resolvePaperclipInstanceRoot();
+
     const runScheduledBackup = async () => {
       if (backupInFlight) {
-        logger.warn("Skipping scheduled database backup because a previous backup is still running");
+        logger.warn("Skipping scheduled backup because a previous backup is still running");
         return;
       }
-  
+
       backupInFlight = true;
       try {
-        const result = await runDatabaseBackup({
+        const result = await runFullBackup({
           connectionString: activeDatabaseConnectionString,
           backupDir: config.databaseBackupDir,
-          retentionDays: config.databaseBackupRetentionDays,
           filenamePrefix: "paperclip",
+          compression: config.databaseBackupCompression,
+          includeFiles: {
+            skills: config.databaseBackupIncludeSkills,
+            projects: config.databaseBackupIncludeProjects,
+            workspaces: config.databaseBackupIncludeWorkspaces,
+            storage: config.databaseBackupIncludeStorage,
+            secrets: config.databaseBackupIncludeSecrets,
+            config: config.databaseBackupIncludeConfig,
+          },
+          gfs: {
+            enabled: config.databaseBackupGfsEnabled,
+            hourlyCount: config.databaseBackupGfsHourlyCount,
+            dailyCount: config.databaseBackupGfsDailyCount,
+            weeklyCount: config.databaseBackupGfsWeeklyCount,
+          },
+          instanceRoot,
+          skillsDir: path.join(instanceRoot, "skills"),
+          projectsDir: path.join(instanceRoot, "projects"),
+          workspacesDir: path.join(instanceRoot, "workspaces"),
+          storageDir: config.storageLocalDiskBaseDir,
+          secretsDir: path.dirname(config.secretsMasterKeyFilePath),
+          configFile: path.join(instanceRoot, "config.json"),
         });
         logger.info(
           {
-            backupFile: result.backupFile,
-            sizeBytes: result.sizeBytes,
+            backupDir: result.backupDir,
+            dbSizeBytes: result.dbSizeBytes,
+            filesSizeBytes: result.filesSizeBytes,
+            totalSizeBytes: result.totalSizeBytes,
             prunedCount: result.prunedCount,
-            backupDir: config.databaseBackupDir,
-            retentionDays: config.databaseBackupRetentionDays,
+            includedDirs: result.includedDirs,
           },
-          `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
+          `Automatic full backup complete: ${formatFullBackupResult(result)}`,
         );
+        // Update last backup time for status API
+        globalLastBackupResult = { ...result, completedAt: new Date() };
       } catch (err) {
-        logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
+        logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic full backup failed");
+        globalLastBackupError = { message: String(err), occurredAt: new Date() };
       } finally {
         backupInFlight = false;
       }
     };
-  
+
+    // Expose scheduler state for the backup status API
+    globalBackupScheduler = {
+      intervalMs: backupIntervalMs,
+      runNow: runScheduledBackup,
+      isInFlight: () => backupInFlight,
+    };
+
     logger.info(
       {
         intervalMinutes: config.databaseBackupIntervalMinutes,
-        retentionDays: config.databaseBackupRetentionDays,
+        compression: config.databaseBackupCompression,
+        gfsEnabled: config.databaseBackupGfsEnabled,
         backupDir: config.databaseBackupDir,
       },
-      "Automatic database backups enabled",
+      "Automatic full backups enabled",
     );
     setInterval(() => {
       void runScheduledBackup();
