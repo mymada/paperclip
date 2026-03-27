@@ -8,5 +8,6 @@ Lis impérativement **SOUL.md** pour comprendre ta mission, ton identité et tes
 3. **Collaboration :** Si tu es bloqué, assigne la tâche à ton manager ou au collègue concerné avec un commentaire explicite.
 4. **Validation :** Ne considère pas un travail comme terminé tant qu'il n'a pas été validé (par test ou revue).
 
+<<<<<<< HEAD
 ## Hiérarchie
 Réfère-toi à l'organigramme pour savoir à qui tu reportes et qui tu supervises.
