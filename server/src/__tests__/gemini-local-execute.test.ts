@@ -9,8 +9,11 @@ async function writeFakeGeminiCommand(commandPath: string): Promise<void> {
 const fs = require("node:fs");
 
 const capturePath = process.env.PAPERCLIP_TEST_CAPTURE_PATH;
+let stdin = "";
+try { stdin = fs.readFileSync(0, "utf8"); } catch (_) {}
 const payload = {
   argv: process.argv.slice(2),
+  stdin,
   paperclipEnvKeys: Object.keys(process.env)
     .filter((key) => key.startsWith("PAPERCLIP_"))
     .sort(),
@@ -41,6 +44,7 @@ console.log(JSON.stringify({
 
 type CapturePayload = {
   argv: string[];
+  stdin: string;
   paperclipEnvKeys: string[];
 };
 
@@ -96,13 +100,11 @@ describe("gemini execute", () => {
       const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as CapturePayload;
       expect(capture.argv).toContain("--output-format");
       expect(capture.argv).toContain("stream-json");
-      expect(capture.argv).toContain("--prompt");
+      expect(capture.argv).not.toContain("--prompt");
       expect(capture.argv).toContain("--approval-mode");
       expect(capture.argv).toContain("yolo");
-      const promptFlagIndex = capture.argv.indexOf("--prompt");
-      const promptArg = promptFlagIndex >= 0 ? capture.argv[promptFlagIndex + 1] : "";
-      expect(promptArg).toContain("Follow the paperclip heartbeat.");
-      expect(promptArg).toContain("Paperclip runtime note:");
+      expect(capture.stdin).toContain("Follow the paperclip heartbeat.");
+      expect(capture.stdin).toContain("Paperclip runtime note:");
       expect(capture.paperclipEnvKeys).toEqual(
         expect.arrayContaining([
           "PAPERCLIP_AGENT_ID",

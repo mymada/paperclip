@@ -100,6 +100,11 @@ export function RunActivityChart({ runs }: { runs: HeartbeatRun[] }) {
         })}
       </div>
       <DateLabels days={days} />
+      <ChartLegend items={[
+        { color: "#10b981", label: "Succès" },
+        { color: "#ef4444", label: "Échec" },
+        { color: "#737373", label: "Autre" },
+      ]} />
     </div>
   );
 }
@@ -258,6 +263,11 @@ export function SuccessRateChart({ runs }: { runs: HeartbeatRun[] }) {
         })}
       </div>
       <DateLabels days={days} />
+      <ChartLegend items={[
+        { color: "#10b981", label: "≥ 80%" },
+        { color: "#eab308", label: "50–79%" },
+        { color: "#ef4444", label: "< 50%" },
+      ]} />
     </div>
   );
 }

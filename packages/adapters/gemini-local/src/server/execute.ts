@@ -212,11 +212,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
+
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+
+  if (sandbox) {
+    effectiveEnv.GEMINI_SANDBOX = "1";
+  } else {
+    delete effectiveEnv.GEMINI_SANDBOX;
+  }
+
   const billingType = resolveGeminiBillingType(effectiveEnv);
   const runtimeEnv = ensurePathInEnv(effectiveEnv);
   await ensureCommandResolvable(command, cwd, runtimeEnv);
@@ -225,8 +233,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const graceSec = asNumber(config.graceSec, 20);
   const extraArgs = (() => {
     const fromExtraArgs = asStringArray(config.extraArgs);
-    if (fromExtraArgs.length > 0) return fromExtraArgs;
-    return asStringArray(config.args);
+    const rawArgs = fromExtraArgs.length > 0 ? fromExtraArgs : asStringArray(config.args);
+    // Filter out empty or whitespace-only arguments which can confuse the Gemini CLI parser
+    // and cause "Cannot use both a positional prompt and the --prompt (-p) flag together"
+    return rawArgs.map(a => a.trim()).filter(Boolean);
   })();
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
@@ -244,7 +254,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
 
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  const instructionsBundleMode = asString(config.instructionsBundleMode, "unmanaged").trim();
+  const instructionsRootPath = asString(config.instructionsRootPath, "").trim();
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
+  
   let instructionsPrefix = "";
   if (instructionsFilePath) {
     try {
@@ -255,10 +268,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `Resolve any relative file references from ${instructionsDir}.\n\n`;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await onLog(
-        "stdout",
-        `[paperclip] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
-      );
+      await onLog("stdout", `[paperclip] Warning: could not read agent instructions for Gemini: ${reason}\n`);
     }
   }
   const commandNotes = (() => {
@@ -303,7 +313,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     paperclipEnvNote,
     apiAccessNote,
     renderedPrompt,
-  ]);
+  ]).trim() || "Hello"; // Fallback to a non-empty string to avoid "Not enough arguments following: prompt"
   const promptMetrics = {
     promptChars: prompt.length,
     instructionsChars: instructionsPrefix.length,
@@ -324,7 +334,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--sandbox=none");
     }
     if (extraArgs.length > 0) args.push(...extraArgs);
-    args.push("--prompt", prompt);
+    // Removed --prompt flag, we will pass it via STDIN
     return args;
   };
 
@@ -335,10 +345,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         adapterType: "gemini_local",
         command,
         cwd,
-        commandNotes,
-        commandArgs: args.map((value, index) => (
-          index === args.length - 1 ? `<prompt ${prompt.length} chars>` : value
-        )),
+        commandNotes: [...commandNotes, "Prompt is passed via STDIN for robustness."],
+        commandArgs: args,
         env: redactEnvForLogs(env),
         prompt,
         promptMetrics,
@@ -353,7 +361,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       graceSec,
       onSpawn,
       onLog,
+      stdin: prompt, // Pass the prompt here
     });
+    
     return {
       proc,
       parsed: parseGeminiJsonl(proc.stdout),

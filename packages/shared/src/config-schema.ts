@@ -18,11 +18,30 @@ export const llmConfigSchema = z.object({
   apiKey: z.string().optional(),
 });
 
+export const backupGfsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  hourlyCount: z.number().int().min(1).max(168).default(24),
+  dailyCount: z.number().int().min(1).max(365).default(7),
+  weeklyCount: z.number().int().min(1).max(104).default(4),
+});
+
+export const backupIncludeFilesConfigSchema = z.object({
+  skills: z.boolean().default(true),
+  projects: z.boolean().default(true),
+  workspaces: z.boolean().default(true),
+  storage: z.boolean().default(true),
+  secrets: z.boolean().default(true),
+  config: z.boolean().default(true),
+});
+
 export const databaseBackupConfigSchema = z.object({
   enabled: z.boolean().default(true),
   intervalMinutes: z.number().int().min(1).max(7 * 24 * 60).default(60),
   retentionDays: z.number().int().min(1).max(3650).default(30),
   dir: z.string().default("~/.paperclip/instances/default/data/backups"),
+  compression: z.boolean().default(true),
+  includeFiles: backupIncludeFilesConfigSchema.default({}),
+  gfs: backupGfsConfigSchema.default({}),
 });
 
 export const databaseConfigSchema = z.object({

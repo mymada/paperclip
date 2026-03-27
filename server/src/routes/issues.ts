@@ -1014,6 +1014,25 @@ export function issueRoutes(db: Db, storage: StorageService) {
         }
       }
 
+      // Wake assignees of issues that were blocked on this one, now that it's done.
+      if (issue.status === "done" && existing.status !== "done") {
+        try {
+          const dependents = await svc.findDependentsToWake(issue.id, issue.companyId);
+          for (const dep of dependents) {
+            if (!dep.assigneeAgentId || wakeups.has(dep.assigneeAgentId)) continue;
+            wakeups.set(dep.assigneeAgentId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "dependency_resolved",
+              payload: { issueId: dep.id, resolvedDependencyId: issue.id },
+              contextSnapshot: { issueId: dep.id, source: "dependency.resolved" },
+            });
+          }
+        } catch (err) {
+          logger.warn({ err, issueId: issue.id }, "failed to wake dependents on issue done");
+        }
+      }
+
       for (const [agentId, wakeup] of wakeups.entries()) {
         heartbeat
           .wakeup(agentId, wakeup)
@@ -1087,6 +1106,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     if (req.actor.type === "agent" && req.actor.agentId !== req.body.agentId) {
       res.status(403).json({ error: "Agent can only checkout as itself" });
+      return;
+    }
+
+    // Enforce max concurrent in-progress issues per agent.
+    const agent = await agentsSvc.getById(req.body.agentId);
+    const maxConcurrentIssues = (agent?.runtimeConfig as Record<string, unknown> | undefined)?.maxConcurrentIssues as number | undefined ?? 3;
+    const activeCount = await svc.countActiveIssuesForAgent(req.body.agentId, issue.companyId);
+    if (activeCount >= maxConcurrentIssues) {
+      res.status(409).json({
+        error: `Agent already has ${activeCount} active issue(s) (max: ${maxConcurrentIssues})`,
+      });
       return;
     }
 
@@ -1233,12 +1263,48 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const reopenRequested = req.body.reopen === true;
     const interruptRequested = req.body.interrupt === true;
     const isClosed = issue.status === "done" || issue.status === "cancelled";
+    // A board user commenting on a blocked issue means they've provided their input → unblock it
+    const isBlockedByAgent =
+      issue.status === "blocked" &&
+      req.actor.type === "board" &&
+      !!issue.assigneeAgentId;
+    // A board user commenting on an in_review issue means they have feedback → send back to agent
+    const isInReviewByAgent =
+      issue.status === "in_review" &&
+      req.actor.type === "board" &&
+      !!issue.assigneeAgentId;
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
     let currentIssue = issue;
 
-    if (reopenRequested && isClosed) {
+    if (reopenRequested && (isBlockedByAgent || isInReviewByAgent)) {
+      const reopenedIssue = await svc.update(id, { status: "in_progress" });
+      if (!reopenedIssue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      reopened = true;
+      reopenFromStatus = issue.status;
+      currentIssue = reopenedIssue;
+
+      await logActivity(db, {
+        companyId: currentIssue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: currentIssue.id,
+        details: {
+          status: "in_progress",
+          reopened: true,
+          reopenedFrom: reopenFromStatus,
+          source: "comment",
+        },
+      });
+    } else if (reopenRequested && isClosed) {
       const reopenedIssue = await svc.update(id, { status: "todo" });
       if (!reopenedIssue) {
         res.status(404).json({ error: "Issue not found" });

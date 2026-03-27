@@ -62,6 +62,8 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 
+import { applyMioraOptimizations } from "../services/miora-optimizations.js";
+
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
     claude_local: "instructionsFilePath",
@@ -468,15 +470,25 @@ export function agentRoutes(db: Db) {
     const promptTemplate = typeof adapterConfig.promptTemplate === "string"
       ? adapterConfig.promptTemplate
       : "";
-    const files = promptTemplate.trim().length === 0
-      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role))
+    let files = promptTemplate.trim().length === 0
+      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role), agent.name)
       : { "AGENTS.md": promptTemplate };
+      
+    // Apply Miora structural rules and Token Economics dynamically
+    files = applyMioraOptimizations(agent, files);
+    
+    // Default to thin context mode for new agents to save tokens (Miora optimization)
+    const nextAdapterConfig = { ...adapterConfig };
+    if (!nextAdapterConfig.contextMode) {
+      nextAdapterConfig.contextMode = "thin";
+    }
+
     const materialized = await instructions.materializeManagedBundle(
       agent,
       files,
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
-    const nextAdapterConfig = { ...materialized.adapterConfig };
+    Object.assign(nextAdapterConfig, materialized.adapterConfig);
     delete nextAdapterConfig.promptTemplate;
 
     const updated = await svc.update(agent.id, { adapterConfig: nextAdapterConfig });
@@ -555,17 +567,24 @@ export function agentRoutes(db: Db) {
     adapterConfig: Record<string, unknown>,
     requestedDesiredSkills: string[] | undefined,
   ) {
-    if (!requestedDesiredSkills) {
-      return {
-        adapterConfig,
-        desiredSkills: null as string[] | null,
-        runtimeSkillEntries: null as Awaited<ReturnType<typeof companySkills.listRuntimeSkillEntries>> | null,
-      };
+    const finalRequestedSkills = requestedDesiredSkills ? [...requestedDesiredSkills] : [];
+
+    // Auto-inject Miora core skills for all agents (only if installed in the company)
+    const mioraCoreSkills = ["miora-patterns", "miora-test"];
+    const hasMissingCoreSkills = mioraCoreSkills.some((skill) => !finalRequestedSkills.includes(skill));
+    if (hasMissingCoreSkills) {
+      const installedSkills = await companySkills.listFull(companyId);
+      const installedKeys = new Set(installedSkills.map((s) => s.key));
+      for (const skill of mioraCoreSkills) {
+        if (!finalRequestedSkills.includes(skill) && installedKeys.has(skill)) {
+          finalRequestedSkills.push(skill);
+        }
+      }
     }
 
     const resolvedRequestedSkills = await companySkills.resolveRequestedSkillKeys(
       companyId,
-      requestedDesiredSkills,
+      finalRequestedSkills,
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
       materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
@@ -978,7 +997,7 @@ export function agentRoutes(db: Db) {
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
-      status: "todo,in_progress,blocked",
+      status: "todo,in_progress,blocked,in_review",
     });
 
     res.json(
@@ -1934,8 +1953,12 @@ export function agentRoutes(db: Db) {
     }
     assertCompanyAccess(req, agent.companyId);
 
-    if (req.actor.type === "agent" && req.actor.agentId !== id) {
-      res.status(403).json({ error: "Agent can only invoke itself" });
+    // Agents may wake up other agents within the same company.
+    // Cross-company isolation is already enforced by assertCompanyAccess above.
+    // We only block an agent from waking up an agent in a different company,
+    // which cannot happen here because assertCompanyAccess would have thrown first.
+    if (req.actor.type === "agent" && req.actor.companyId !== agent.companyId) {
+      res.status(403).json({ error: "Agent can only invoke agents within the same company" });
       return;
     }
 
@@ -1984,8 +2007,10 @@ export function agentRoutes(db: Db) {
     }
     assertCompanyAccess(req, agent.companyId);
 
-    if (req.actor.type === "agent" && req.actor.agentId !== id) {
-      res.status(403).json({ error: "Agent can only invoke itself" });
+    // Agents may invoke other agents within the same company.
+    // Cross-company isolation is enforced by assertCompanyAccess above.
+    if (req.actor.type === "agent" && req.actor.companyId !== agent.companyId) {
+      res.status(403).json({ error: "Agent can only invoke agents within the same company" });
       return;
     }
 

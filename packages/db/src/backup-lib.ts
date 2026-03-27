@@ -1,5 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { createGzip } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
 
@@ -12,12 +14,57 @@ export type RunDatabaseBackupOptions = {
   includeMigrationJournal?: boolean;
   excludeTables?: string[];
   nullifyColumns?: Record<string, string[]>;
+  compression?: boolean;
 };
 
 export type RunDatabaseBackupResult = {
   backupFile: string;
   sizeBytes: number;
   prunedCount: number;
+};
+
+export type GfsOptions = {
+  enabled: boolean;
+  hourlyCount: number;
+  dailyCount: number;
+  weeklyCount: number;
+};
+
+export type BackupIncludeFiles = {
+  skills: boolean;
+  projects: boolean;
+  workspaces: boolean;
+  storage: boolean;
+  secrets: boolean;
+  config: boolean;
+};
+
+export type RunFullBackupOptions = {
+  connectionString: string;
+  backupDir: string;
+  filenamePrefix?: string;
+  connectTimeoutSeconds?: number;
+  compression?: boolean;
+  includeFiles?: Partial<BackupIncludeFiles>;
+  gfs?: GfsOptions;
+  // Paths to instance directories
+  instanceRoot?: string;
+  skillsDir?: string;
+  projectsDir?: string;
+  workspacesDir?: string;
+  storageDir?: string;
+  secretsDir?: string;
+  configFile?: string;
+};
+
+export type RunFullBackupResult = {
+  backupDir: string;
+  dbFile: string;
+  dbSizeBytes: number;
+  filesSizeBytes: number;
+  totalSizeBytes: number;
+  prunedCount: number;
+  includedDirs: string[];
 };
 
 export type RunDatabaseRestoreOptions = {
@@ -76,7 +123,8 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   let pruned = 0;
 
   for (const name of readdirSync(backupDir)) {
-    if (!name.startsWith(`${filenamePrefix}-`) || !name.endsWith(".sql")) continue;
+    if (!name.startsWith(`${filenamePrefix}-`)) continue;
+    if (!name.endsWith(".sql") && !name.endsWith(".sql.gz")) continue;
     const fullPath = resolve(backupDir, name);
     const stat = statSync(fullPath);
     if (stat.mtimeMs < cutoff) {
@@ -86,6 +134,130 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   }
 
   return pruned;
+}
+
+function parseBackupTimestamp(name: string, prefix: string): number | null {
+  // Matches: prefix-YYYYMMDD-HHMMSS (dir or file)
+  const re = new RegExp(`^${prefix}-full-(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})(\\d{2})$`);
+  const m = name.match(re);
+  if (!m) return null;
+  const [, year, month, day, hour, min, sec] = m;
+  return new Date(`${year}-${month}-${day}T${hour}:${min}:${sec}Z`).getTime();
+}
+
+function getIsoWeekKey(d: Date): string {
+  const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayOfWeek = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - dayOfWeek);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((tmp.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function pruneFullBackupsGfs(backupDir: string, filenamePrefix: string, gfs: GfsOptions): number {
+  if (!existsSync(backupDir)) return 0;
+
+  type Entry = { name: string; fullPath: string; ts: number };
+  const entries: Entry[] = [];
+
+  for (const name of readdirSync(backupDir)) {
+    const ts = parseBackupTimestamp(name, filenamePrefix);
+    if (ts === null) continue;
+    entries.push({ name, fullPath: resolve(backupDir, name), ts });
+  }
+
+  if (entries.length === 0) return 0;
+
+  // Sort newest first
+  entries.sort((a, b) => b.ts - a.ts);
+
+  const now = Date.now();
+  const toKeep = new Set<string>();
+
+  // Hourly tier: keep all within last hourlyCount hours
+  const hourlyWindowMs = gfs.hourlyCount * 60 * 60 * 1000;
+  for (const e of entries) {
+    if (now - e.ts <= hourlyWindowMs) toKeep.add(e.name);
+  }
+
+  // Daily tier: keep 1 per day for last dailyCount days
+  const dailyWindowMs = gfs.dailyCount * 24 * 60 * 60 * 1000;
+  const seenDays = new Set<string>();
+  for (const e of entries) {
+    if (now - e.ts > dailyWindowMs) continue;
+    const dayKey = new Date(e.ts).toISOString().slice(0, 10);
+    if (!seenDays.has(dayKey)) {
+      seenDays.add(dayKey);
+      toKeep.add(e.name);
+    }
+  }
+
+  // Weekly tier: keep 1 per week for last weeklyCount weeks
+  const weeklyWindowMs = gfs.weeklyCount * 7 * 24 * 60 * 60 * 1000;
+  const seenWeeks = new Set<string>();
+  for (const e of entries) {
+    if (now - e.ts > weeklyWindowMs) continue;
+    const weekKey = getIsoWeekKey(new Date(e.ts));
+    if (!seenWeeks.has(weekKey)) {
+      seenWeeks.add(weekKey);
+      toKeep.add(e.name);
+    }
+  }
+
+  // Delete everything not in toKeep
+  let pruned = 0;
+  for (const e of entries) {
+    if (toKeep.has(e.name)) continue;
+    try {
+      const stat = statSync(e.fullPath);
+      if (stat.isDirectory()) {
+        rmSync(e.fullPath, { recursive: true, force: true });
+      } else {
+        unlinkSync(e.fullPath);
+      }
+      pruned++;
+    } catch {
+      // ignore prune errors
+    }
+  }
+
+  return pruned;
+}
+
+async function compressFileGzip(inputPath: string, outputPath: string): Promise<void> {
+  await pipeline(
+    createReadStream(inputPath),
+    createGzip({ level: 6 }),
+    createWriteStream(outputPath),
+  );
+  unlinkSync(inputPath);
+}
+
+async function copyDirIfExists(src: string, dest: string): Promise<number> {
+  if (!src || !existsSync(src)) return 0;
+  const entries = readdirSync(src);
+  if (entries.length === 0) return 0;
+  await cp(src, dest, { recursive: true });
+  // Return approximate size
+  try {
+    return statSync(dest).size;
+  } catch {
+    return 0;
+  }
+}
+
+function dirSizeSync(dirPath: string): number {
+  if (!existsSync(dirPath)) return 0;
+  let total = 0;
+  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+    const child = resolve(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      total += dirSizeSync(child);
+    } else {
+      try { total += statSync(child).size; } catch { /* ignore */ }
+    }
+  }
+  return total;
 }
 
 function formatBackupSize(sizeBytes: number): string {
@@ -503,10 +675,18 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     emitStatement("COMMIT;");
     emit("");
 
-    // Write the backup file
+    // Write the backup file (with optional gzip compression)
     mkdirSync(opts.backupDir, { recursive: true });
-    const backupFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
-    await writeFile(backupFile, lines.join("\n"), "utf8");
+    const useCompression = opts.compression !== false;
+    const sqlFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
+    await writeFile(sqlFile, lines.join("\n"), "utf8");
+
+    let backupFile = sqlFile;
+    if (useCompression) {
+      const gzFile = `${sqlFile}.gz`;
+      await compressFileGzip(sqlFile, gzFile);
+      backupFile = gzFile;
+    }
 
     const sizeBytes = statSync(backupFile).size;
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
@@ -519,6 +699,95 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   } finally {
     await sql.end();
   }
+}
+
+export async function runFullBackup(opts: RunFullBackupOptions): Promise<RunFullBackupResult> {
+  const filenamePrefix = opts.filenamePrefix ?? "paperclip";
+  const useCompression = opts.compression !== false;
+  const include: BackupIncludeFiles = {
+    skills: opts.includeFiles?.skills !== false,
+    projects: opts.includeFiles?.projects !== false,
+    workspaces: opts.includeFiles?.workspaces !== false,
+    storage: opts.includeFiles?.storage !== false,
+    secrets: opts.includeFiles?.secrets !== false,
+    config: opts.includeFiles?.config !== false,
+  };
+  const gfs: GfsOptions = opts.gfs ?? { enabled: true, hourlyCount: 24, dailyCount: 7, weeklyCount: 4 };
+
+  const ts = timestamp();
+  const backupEntryName = `${filenamePrefix}-full-${ts}`;
+  const backupEntryPath = resolve(opts.backupDir, backupEntryName);
+
+  mkdirSync(backupEntryPath, { recursive: true });
+
+  // 1. DB dump
+  const dbResult = await runDatabaseBackup({
+    connectionString: opts.connectionString,
+    backupDir: backupEntryPath,
+    retentionDays: 9999, // No pruning inside the entry — GFS handles it at the top level
+    filenamePrefix: "db",
+    connectTimeoutSeconds: opts.connectTimeoutSeconds,
+    compression: useCompression,
+  });
+
+  const includedDirs: string[] = ["db"];
+
+  // 2. Copy instance file directories
+  const instanceRoot = opts.instanceRoot ?? "";
+
+  const dirsToInclude: Array<{ key: keyof BackupIncludeFiles; src: string | undefined; dest: string }> = [
+    { key: "skills", src: opts.skillsDir, dest: resolve(backupEntryPath, "skills") },
+    { key: "projects", src: opts.projectsDir, dest: resolve(backupEntryPath, "projects") },
+    { key: "workspaces", src: opts.workspacesDir, dest: resolve(backupEntryPath, "workspaces") },
+    { key: "storage", src: opts.storageDir, dest: resolve(backupEntryPath, "storage") },
+    { key: "secrets", src: opts.secretsDir, dest: resolve(backupEntryPath, "secrets") },
+  ];
+
+  let filesSizeBytes = 0;
+  for (const { key, src, dest } of dirsToInclude) {
+    if (!include[key] || !src) continue;
+    await copyDirIfExists(src, dest);
+    const sz = dirSizeSync(dest);
+    if (sz > 0) {
+      filesSizeBytes += sz;
+      includedDirs.push(key);
+    }
+  }
+
+  // 3. Copy config.json
+  if (include.config && opts.configFile && existsSync(opts.configFile)) {
+    const destConfig = resolve(backupEntryPath, "config.json");
+    await cp(opts.configFile, destConfig);
+    includedDirs.push("config.json");
+  }
+
+  // 4. Write manifest
+  const manifest = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    instanceRoot,
+    compression: useCompression,
+    included: includedDirs,
+    dbFile: useCompression ? "db.sql.gz" : "db.sql",
+  };
+  await writeFile(resolve(backupEntryPath, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+
+  const totalSizeBytes = dbResult.sizeBytes + filesSizeBytes;
+
+  // 5. GFS rotation — prune old full backups
+  const prunedCount = gfs.enabled
+    ? pruneFullBackupsGfs(opts.backupDir, filenamePrefix, gfs)
+    : 0;
+
+  return {
+    backupDir: backupEntryPath,
+    dbFile: dbResult.backupFile,
+    dbSizeBytes: dbResult.sizeBytes,
+    filesSizeBytes,
+    totalSizeBytes,
+    prunedCount,
+    includedDirs,
+  };
 }
 
 export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promise<void> {
@@ -555,4 +824,27 @@ export function formatDatabaseBackupResult(result: RunDatabaseBackupResult): str
   const size = formatBackupSize(result.sizeBytes);
   const pruned = result.prunedCount > 0 ? `; pruned ${result.prunedCount} old backup(s)` : "";
   return `${result.backupFile} (${size}${pruned})`;
+}
+
+export function formatFullBackupResult(result: RunFullBackupResult): string {
+  const dbSize = formatBackupSize(result.dbSizeBytes);
+  const filesSize = formatBackupSize(result.filesSizeBytes);
+  const totalSize = formatBackupSize(result.totalSizeBytes);
+  const pruned = result.prunedCount > 0 ? `; pruned ${result.prunedCount} old backup(s)` : "";
+  return `${result.backupDir} (db: ${dbSize}, files: ${filesSize}, total: ${totalSize}${pruned})`;
+}
+
+export function listFullBackups(backupDir: string, filenamePrefix = "paperclip"): Array<{ name: string; path: string; createdAt: Date; sizeBytes: number }> {
+  if (!existsSync(backupDir)) return [];
+  const results: Array<{ name: string; path: string; createdAt: Date; sizeBytes: number }> = [];
+  for (const name of readdirSync(backupDir)) {
+    const ts = parseBackupTimestamp(name, filenamePrefix);
+    if (ts === null) continue;
+    const fullPath = resolve(backupDir, name);
+    try {
+      const sizeBytes = dirSizeSync(fullPath);
+      results.push({ name, path: fullPath, createdAt: new Date(ts), sizeBytes });
+    } catch { /* ignore */ }
+  }
+  return results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }

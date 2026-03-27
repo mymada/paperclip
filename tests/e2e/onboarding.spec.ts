@@ -125,7 +125,7 @@ test.describe("Onboarding wizard", () => {
     expect(task).toBeTruthy();
     expect(task.assigneeAgentId).toBe(ceoAgent.id);
     expect(task.description).toContain(
-      "You are the CEO. You set the direction for the company."
+      "Tu es l'agent **CEO** au sein de l'entreprise."
     );
     expect(task.description).not.toContain("github.com/paperclipai/companies");
 

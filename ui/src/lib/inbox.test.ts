@@ -186,6 +186,11 @@ const dashboard: DashboardSummary = {
     monthBudgetCents: 1000,
     monthUtilizationPercent: 90,
   },
+  issues: {
+    criticalCount: 0,
+    stalledCount: 0,
+    doneThisWeekCount: 0,
+  },
   pendingApprovals: 1,
   budgets: {
     activeIncidents: 0,

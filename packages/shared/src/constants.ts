@@ -16,6 +16,7 @@ export const AGENT_STATUSES = [
   "idle",
   "running",
   "error",
+  "rate_limited",
   "pending_approval",
   "terminated",
 ] as const;
@@ -26,6 +27,7 @@ export const AGENT_ADAPTER_TYPES = [
   "http",
   "claude_local",
   "codex_local",
+  "gemini_local",
   "opencode_local",
   "pi_local",
   "cursor",

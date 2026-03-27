@@ -18,7 +18,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Check, ChevronDown, ChevronRight, Copy, Download, FileText, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, MoreHorizontal, Plus, Trash2, X } from "lucide-react";
+import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
 type DraftState = {
   key: string;
@@ -106,6 +107,7 @@ export function IssueDocumentsSection({
   const [foldedDocumentKeys, setFoldedDocumentKeys] = useState<string[]>(() => loadFoldedDocumentKeys(issue.id));
   const [autosaveDocumentKey, setAutosaveDocumentKey] = useState<string | null>(null);
   const [copiedDocumentKey, setCopiedDocumentKey] = useState<string | null>(null);
+  const [previewDocumentKey, setPreviewDocumentKey] = useState<string | null>(null);
   const [highlightDocumentKey, setHighlightDocumentKey] = useState<string | null>(null);
   const autosaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copiedDocumentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -662,6 +664,15 @@ export function IssueDocumentsSection({
                   <Button
                     variant="ghost"
                     size="icon-xs"
+                    className="text-muted-foreground transition-colors"
+                    title="Aperçu plein écran"
+                    onClick={() => setPreviewDocumentKey(doc.key)}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     className={cn(
                       "text-muted-foreground transition-colors",
                       copiedDocumentKey === doc.key && "text-foreground",
@@ -886,6 +897,16 @@ export function IssueDocumentsSection({
           );
         })}
       </div>
+
+      {previewDocumentKey && (
+        <DocumentPreviewModal
+          issueId={issue.id}
+          issueTitle={issue.title}
+          open={!!previewDocumentKey}
+          onOpenChange={(open) => { if (!open) setPreviewDocumentKey(null); }}
+          initialKey={previewDocumentKey}
+        />
+      )}
     </div>
   );
 }

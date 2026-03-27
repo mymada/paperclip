@@ -71,7 +71,14 @@ export async function testEnvironment(
   for (const [key, value] of Object.entries(envConfig)) {
     if (typeof value === "string") env[key] = value;
   }
+  const sandbox = asBoolean(config.sandbox, false);
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
+  if (sandbox) {
+    runtimeEnv.GEMINI_SANDBOX = "1";
+  } else {
+    delete runtimeEnv.GEMINI_SANDBOX;
+  }
+
   try {
     await ensureCommandResolvable(command, cwd, runtimeEnv);
     checks.push({
@@ -134,7 +141,6 @@ export async function testEnvironment(
     } else {
       const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
       const approvalMode = asString(config.approvalMode, asBoolean(config.yolo, false) ? "yolo" : "default");
-      const sandbox = asBoolean(config.sandbox, false);
       const helloProbeTimeoutSec = Math.max(1, asNumber(config.helloProbeTimeoutSec, 10));
       const extraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);

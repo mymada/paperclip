@@ -2929,6 +2929,14 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         .filter((slug): slug is string => Boolean(slug)),
     });
 
+    const includes: string[] = [];
+    for (const filePath of Object.keys(files)) {
+      if (filePath === "COMPANY.md" || filePath === ".paperclip.yaml" || filePath === "README.md" || filePath.startsWith("images/")) {
+        continue;
+      }
+      includes.push(filePath);
+    }
+
     const companyPath = "COMPANY.md";
     files[companyPath] = buildMarkdown(
       {
@@ -2936,6 +2944,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         description: company.description ?? null,
         schema: "agentcompanies/v1",
         slug: rootPath,
+        includes: includes.length > 0 ? includes.sort() : undefined,
       },
       "",
     );

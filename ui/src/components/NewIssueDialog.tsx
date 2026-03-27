@@ -83,7 +83,7 @@ type StagedIssueFile = {
   title?: string | null;
 };
 
-const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local"]);
+const ISSUE_OVERRIDE_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local"]);
 const STAGED_FILE_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 
 const ISSUE_THINKING_EFFORT_OPTIONS = {
@@ -774,6 +774,8 @@ export function NewIssueDialog() {
       ? "Claude options"
       : assigneeAdapterType === "codex_local"
         ? "Codex options"
+      : assigneeAdapterType === "gemini_local"
+        ? "Gemini options"
         : assigneeAdapterType === "opencode_local"
           ? "OpenCode options"
         : "Agent options";

@@ -5,7 +5,7 @@
  * External npm packages remain as regular dependencies.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, chmodSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,4 +62,16 @@ export default {
   external: [...externals].sort(),
   treeShaking: true,
   sourcemap: true,
+  plugins: [
+    {
+      name: "make-executable",
+      setup(build) {
+        build.onEnd(() => {
+          try {
+            chmodSync("dist/index.js", 0o755);
+          } catch {}
+        });
+      },
+    },
+  ],
 };

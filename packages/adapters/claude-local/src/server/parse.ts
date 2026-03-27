@@ -177,3 +177,21 @@ export function isClaudeUnknownSessionError(parsed: Record<string, unknown>): bo
     /no conversation found with session id|unknown session|session .* not found/i.test(msg),
   );
 }
+
+export function isClaudeRateLimited(parsed: Record<string, unknown> | null | undefined): { isRateLimited: boolean; resetsAt: string | null } {
+  if (!parsed) return { isRateLimited: false, resetsAt: null };
+
+  const resultText = asString(parsed.result, "").trim();
+  const errors = extractClaudeErrorMessages(parsed);
+  const allMessages = [resultText, ...errors].join("\n").toLowerCase();
+
+  const isRateLimited = allMessages.includes("you've hit your limit") || allMessages.includes("rate limit");
+  if (!isRateLimited) return { isRateLimited: false, resetsAt: null };
+
+  // Try to extract reset time: e.g. "resets 10am (UTC)"
+  const match = allMessages.match(/resets\s+([^()]+(?:\([^()]+\))?)/i);
+  const resetsAt = match ? match[1].trim() : null;
+
+  return { isRateLimited: true, resetsAt };
+}
+

@@ -16,7 +16,10 @@ import {
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
+import {
+  DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
+  DEFAULT_GEMINI_LOCAL_MODEL,
+} from "@paperclipai/adapter-gemini-local";
 import {
   Popover,
   PopoverContent,
@@ -557,6 +560,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
                       nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
+                      nextValues.dangerouslyBypassSandbox = DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX;
                     } else if (t === "cursor") {
                       nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
                     } else if (t === "opencode_local") {
@@ -587,7 +591,11 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                               dangerouslyBypassApprovalsAndSandbox:
                                 DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
                             }
-                          : {}),
+                          : t === "gemini_local"
+                            ? {
+                                sandbox: !DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
+                              }
+                            : {}),
                       },
                     }));
                   }

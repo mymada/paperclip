@@ -1,6 +1,7 @@
 export const type = "gemini_local";
 export const label = "Gemini CLI (local)";
 export const DEFAULT_GEMINI_LOCAL_MODEL = "auto";
+export const DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX = true;
 
 export const models = [
   { id: DEFAULT_GEMINI_LOCAL_MODEL, label: "Auto" },

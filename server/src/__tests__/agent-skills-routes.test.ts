@@ -41,6 +41,7 @@ const mockAgentInstructionsService = vi.hoisted(() => ({
 }));
 
 const mockCompanySkillService = vi.hoisted(() => ({
+  listFull: vi.fn(),
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
 }));
@@ -137,6 +138,10 @@ describe("agent skill routes", () => {
       agent: makeAgent("claude_local"),
     });
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValue({ config: { env: {} } });
+    mockCompanySkillService.listFull.mockResolvedValue([
+      { key: "miora-patterns", slug: "miora-patterns" },
+      { key: "miora-test", slug: "miora-test" },
+    ]);
     mockCompanySkillService.listRuntimeSkillEntries.mockResolvedValue([
       {
         key: "paperclipai/paperclip/paperclip",
@@ -158,7 +163,7 @@ describe("agent skill routes", () => {
       adapterType: "claude_local",
       supported: true,
       mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
+      "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
       entries: [],
       warnings: [],
     });
@@ -166,7 +171,7 @@ describe("agent skill routes", () => {
       adapterType: "claude_local",
       supported: true,
       mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
+      "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
       entries: [],
       warnings: [],
     });
@@ -237,7 +242,7 @@ describe("agent skill routes", () => {
       adapterType: "codex_local",
       supported: true,
       mode: "persistent",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
+      "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
       entries: [],
       warnings: [],
     });
@@ -273,13 +278,13 @@ describe("agent skill routes", () => {
       .send({ desiredSkills: ["paperclip"] });
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockCompanySkillService.resolveRequestedSkillKeys).toHaveBeenCalledWith("company-1", ["paperclip"]);
+    expect(mockCompanySkillService.resolveRequestedSkillKeys).toHaveBeenCalledWith("company-1", ["paperclip", "miora-patterns", "miora-test"]);
     expect(mockAgentService.update).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         adapterConfig: expect.objectContaining({
           paperclipSkillSync: expect.objectContaining({
-            desiredSkills: ["paperclipai/paperclip/paperclip"],
+            "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
           }),
         }),
       }),
@@ -299,13 +304,13 @@ describe("agent skill routes", () => {
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockCompanySkillService.resolveRequestedSkillKeys).toHaveBeenCalledWith("company-1", ["paperclip"]);
+    expect(mockCompanySkillService.resolveRequestedSkillKeys).toHaveBeenCalledWith("company-1", ["paperclip", "miora-patterns", "miora-test"]);
     expect(mockAgentService.create).toHaveBeenCalledWith(
       "company-1",
       expect.objectContaining({
         adapterConfig: expect.objectContaining({
           paperclipSkillSync: expect.objectContaining({
-            desiredSkills: ["paperclipai/paperclip/paperclip"],
+            "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
           }),
         }),
       }),
@@ -330,7 +335,11 @@ describe("agent skill routes", () => {
         id: "11111111-1111-4111-8111-111111111111",
         adapterType: "claude_local",
       }),
-      { "AGENTS.md": "You are QA." },
+      expect.objectContaining({
+        "AGENTS.md": expect.stringContaining("Tu es l'agent **QA Agent**"),
+        "TOKEN_ECONOMICS.md": expect.stringContaining("# Token Economics: Efficiency Rules"),
+        "KERNEL_FRAMEWORK.md": expect.stringContaining("# The KERNEL Prompting Framework"),
+      }),
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
     expect(mockAgentService.update).toHaveBeenCalledWith(
@@ -368,9 +377,9 @@ describe("agent skill routes", () => {
         adapterType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("You are the CEO."),
-        "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
-        "SOUL.md": expect.stringContaining("CEO Persona"),
+        "AGENTS.md": expect.stringContaining("Tu es l'agent **CEO**"),
+        "HEARTBEAT.md": expect.stringContaining("CEO (ceo) Heartbeat Checklist"),
+        "SOUL.md": expect.stringContaining("CEO (Visionnaire & Garant)"),
         "TOOLS.md": expect.stringContaining("# Tools"),
       }),
       { entryFile: "AGENTS.md", replaceExisting: false },
@@ -395,7 +404,7 @@ describe("agent skill routes", () => {
         adapterType: "claude_local",
       }),
       expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("Keep the work moving until it's done."),
+        "AGENTS.md": expect.stringContaining("Tu es l'agent **Engineer**"),
       }),
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
@@ -415,14 +424,14 @@ describe("agent skill routes", () => {
       });
 
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect(mockCompanySkillService.resolveRequestedSkillKeys).toHaveBeenCalledWith("company-1", ["paperclip"]);
+    expect(mockCompanySkillService.resolveRequestedSkillKeys).toHaveBeenCalledWith("company-1", ["paperclip", "miora-patterns", "miora-test"]);
     expect(mockApprovalService.create).toHaveBeenCalledWith(
       "company-1",
       expect.objectContaining({
         payload: expect.objectContaining({
-          desiredSkills: ["paperclipai/paperclip/paperclip"],
+          "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
           requestedConfigurationSnapshot: expect.objectContaining({
-            desiredSkills: ["paperclipai/paperclip/paperclip"],
+            "desiredSkills": ["paperclipai/paperclip/paperclip", "miora-patterns", "miora-test"],
           }),
         }),
       }),

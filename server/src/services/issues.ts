@@ -74,6 +74,7 @@ export interface IssueFilters {
   originId?: string;
   includeRoutineExecutions?: boolean;
   q?: string;
+  limit?: number;
 }
 
 type IssueRow = typeof issues.$inferSelect;
@@ -583,6 +584,19 @@ export function issueService(db: Db) {
       }
       if (filters?.assigneeAgentId) {
         conditions.push(eq(issues.assigneeAgentId, filters.assigneeAgentId));
+
+        // Filter out issues that depend on another issue that is NOT 'done'
+        const blockedByPendingDependency = sql<boolean>`
+          (
+            ${issues.dependsOnIssueId} IS NULL
+            OR EXISTS (
+              SELECT 1 FROM ${issues} as dep
+              WHERE dep.id = ${issues.dependsOnIssueId}
+                AND dep.status = 'done'
+            )
+          )
+        `;
+        conditions.push(blockedByPendingDependency);
       }
       if (filters?.participantAgentId) {
         conditions.push(participatedByAgentCondition(companyId, filters.participantAgentId));
@@ -635,11 +649,13 @@ export function issueService(db: Db) {
           ELSE 6
         END
       `;
-      const rows = await db
+      const query = db
         .select()
         .from(issues)
         .where(and(...conditions))
         .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt));
+
+      const rows = filters?.limit ? await query.limit(filters.limit) : await query;
       const withLabels = await withIssueLabels(db, rows);
       const runMap = await activeRunMapForIssues(db, withLabels);
       const withRuns = withActiveRuns(withLabels, runMap);
@@ -849,6 +865,7 @@ export function issueService(db: Db) {
             projectGoalId,
             defaultGoalId: defaultCompanyGoal?.id ?? null,
           }),
+          dependsOnIssueId: issueData.dependsOnIssueId ?? null,
           ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
           ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
           companyId,
@@ -1361,7 +1378,7 @@ export function issueService(db: Db) {
 
     addComment: async (issueId: string, body: string, actor: { agentId?: string; userId?: string }) => {
       const issue = await db
-        .select({ companyId: issues.companyId })
+        .select({ id: issues.id, companyId: issues.companyId })
         .from(issues)
         .where(eq(issues.id, issueId))
         .then((rows) => rows[0] ?? null);
@@ -1371,7 +1388,44 @@ export function issueService(db: Db) {
       const currentUserRedactionOptions = {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
-      const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
+
+      const MAX_COMMENT_BODY_CHARS = 50000;
+      let processedBody = body.trim();
+      if (processedBody.length > MAX_COMMENT_BODY_CHARS) {
+        processedBody = processedBody.slice(0, MAX_COMMENT_BODY_CHARS) + "\n\n... (truncated)";
+      }
+      const redactedBody = redactCurrentUserText(processedBody, currentUserRedactionOptions);
+
+      // Dedup: skip if the last comment on this issue has the exact same author and body
+      const lastComment = await db
+        .select({ authorAgentId: issueComments.authorAgentId, authorUserId: issueComments.authorUserId, body: issueComments.body })
+        .from(issueComments)
+        .where(eq(issueComments.issueId, issueId))
+        .orderBy(desc(issueComments.createdAt), desc(issueComments.id))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+
+      if (
+        lastComment &&
+        lastComment.authorAgentId === (actor.agentId ?? null) &&
+        lastComment.authorUserId === (actor.userId ?? null) &&
+        lastComment.body === redactedBody
+      ) {
+        return redactIssueComment(
+          {
+            id: "skipped_duplicate",
+            companyId: issue.companyId,
+            issueId,
+            authorAgentId: actor.agentId ?? null,
+            authorUserId: actor.userId ?? null,
+            body: redactedBody,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          currentUserRedactionOptions.enabled,
+        );
+      }
+
       const [comment] = await db
         .insert(issueComments)
         .values({
@@ -1610,6 +1664,33 @@ export function issueService(db: Db) {
         );
       const valid = new Set(rows.map((row) => row.id));
       return [...mentionedIds].filter((projectId) => valid.has(projectId));
+    },
+
+    countActiveIssuesForAgent: async (agentId: string, companyId: string) => {
+      const rows = await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.assigneeAgentId, agentId),
+            eq(issues.companyId, companyId),
+            inArray(issues.status, ["in_progress", "in_review"]),
+          ),
+        );
+      return rows.length;
+    },
+
+    findDependentsToWake: async (resolvedIssueId: string, companyId: string) => {
+      return db
+        .select({ id: issues.id, assigneeAgentId: issues.assigneeAgentId })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.dependsOnIssueId, resolvedIssueId),
+            eq(issues.companyId, companyId),
+            sql`${issues.status} NOT IN ('done', 'cancelled')`,
+          ),
+        );
     },
 
     getAncestors: async (issueId: string) => {

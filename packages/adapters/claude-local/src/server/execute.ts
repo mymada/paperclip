@@ -27,6 +27,7 @@ import {
   detectClaudeLoginRequired,
   isClaudeMaxTurnsResult,
   isClaudeUnknownSessionError,
+  isClaudeRateLimited,
 } from "./parse.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 
@@ -390,15 +391,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     !sessionId && bootstrapPromptTemplate.trim().length > 0
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
+  const hierarchicalInstructions = asString(context.paperclipHierarchicalInstructions, "").trim();
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const prompt = joinPromptSections([
     renderedBootstrapPrompt,
+    hierarchicalInstructions,
     sessionHandoffNote,
     renderedPrompt,
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
+    hierarchicalInstructionChars: hierarchicalInstructions.length,
     sessionHandoffChars: sessionHandoffNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };
@@ -480,12 +484,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       stdout: proc.stdout,
       stderr: proc.stderr,
     });
+    const rateLimited = isClaudeRateLimited(parsed);
     const errorMeta =
       loginMeta.loginUrl != null
         ? {
             loginUrl: loginMeta.loginUrl,
           }
-        : undefined;
+        : rateLimited.isRateLimited
+          ? {
+              resetsAt: rateLimited.resetsAt,
+            }
+          : undefined;
 
     if (proc.timedOut) {
       return {
@@ -548,7 +557,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         (proc.exitCode ?? 0) === 0
           ? null
           : describeClaudeFailure(parsed) ?? `Claude exited with code ${proc.exitCode ?? -1}`,
-      errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
+      errorCode: loginMeta.requiresLogin
+        ? "claude_auth_required"
+        : rateLimited.isRateLimited
+          ? "claude_rate_limited"
+          : null,
       errorMeta,
       usage,
       sessionId: resolvedSessionId,

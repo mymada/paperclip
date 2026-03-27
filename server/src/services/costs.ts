@@ -2,6 +2,7 @@ import { and, desc, eq, gte, isNotNull, lt, lte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, companies, costEvents, issues, projects } from "@paperclipai/db";
 import { notFound, unprocessable } from "../errors.js";
+import { logActivity } from "./activity-log.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
 
 export interface CostDateRange {
@@ -43,6 +44,26 @@ async function getMonthlySpendTotal(
   return Number(row?.total ?? 0);
 }
 
+async function getHourlySpendTotal(
+  db: Db,
+  scope: { companyId: string; agentId: string },
+) {
+  const since = new Date(Date.now() - 60 * 60 * 1000);
+  const [row] = await db
+    .select({
+      total: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
+    })
+    .from(costEvents)
+    .where(
+      and(
+        eq(costEvents.companyId, scope.companyId),
+        eq(costEvents.agentId, scope.agentId),
+        gte(costEvents.occurredAt, since),
+      ),
+    );
+  return Number(row?.total ?? 0);
+}
+
 export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
   const budgets = budgetService(db, budgetHooks);
   return {
@@ -70,9 +91,10 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         .returning()
         .then((rows) => rows[0]);
 
-      const [agentMonthSpend, companyMonthSpend] = await Promise.all([
+      const [agentMonthSpend, companyMonthSpend, agentHourlySpend] = await Promise.all([
         getMonthlySpendTotal(db, { companyId, agentId: event.agentId }),
         getMonthlySpendTotal(db, { companyId }),
+        getHourlySpendTotal(db, { companyId, agentId: event.agentId }),
       ]);
 
       await db
@@ -90,6 +112,34 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
           updatedAt: new Date(),
         })
         .where(eq(companies.id, companyId));
+
+      // Circuit Breaker: if hourly spend > $10 (1000 cents), pause agent
+      const HOURLY_CENTS_LIMIT = 1000;
+      if (agentHourlySpend > HOURLY_CENTS_LIMIT && agent.status !== "paused") {
+        await db
+          .update(agents)
+          .set({
+            status: "paused",
+            pauseReason: "budget",
+            pausedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(agents.id, event.agentId));
+        
+        await logActivity(db, {
+          companyId,
+          actorType: "system",
+          actorId: "cost_service",
+          action: "agent.paused",
+          entityType: "agent",
+          entityId: event.agentId,
+          details: {
+            reason: "Hourly budget circuit breaker triggered",
+            hourlySpendCents: agentHourlySpend,
+            limitCents: HOURLY_CENTS_LIMIT,
+          },
+        });
+      }
 
       await budgets.evaluateCostEvent(event);
 

@@ -10,6 +10,7 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  companies,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -1617,6 +1618,7 @@ export function heartbeatService(db: Db) {
       intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
       wakeOnDemand: asBoolean(heartbeat.wakeOnDemand ?? heartbeat.wakeOnAssignment ?? heartbeat.wakeOnOnDemand ?? heartbeat.wakeOnAutomation, true),
       maxConcurrentRuns: normalizeMaxConcurrentRuns(heartbeat.maxConcurrentRuns),
+      skipIfInboxEmpty: asBoolean(heartbeat.skipIfInboxEmpty, false),
     };
   }
 
@@ -1966,8 +1968,42 @@ export function heartbeatService(db: Db) {
     }
 
     const runtime = await ensureRuntimeState(agent);
+    const policy = parseHeartbeatPolicy(agent);
     const context = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKey(context, null);
+
+    if (policy.skipIfInboxEmpty && !taskKey && run.invocationSource === "timer") {
+      const issuesSvc = issueService(db);
+      const pendingIssues = await issuesSvc.list(agent.companyId, {
+        assigneeAgentId: agent.id,
+        status: "todo,in_progress,blocked",
+        limit: 1,
+      });
+
+      if (pendingIssues.length === 0) {
+        await setRunStatus(runId, "succeeded", {
+          error: "Skipped: Agent inbox is empty (skipIfInboxEmpty policy)",
+          errorCode: "skipped_empty_inbox",
+          finishedAt: new Date(),
+        });
+        await setWakeupStatus(run.wakeupRequestId, "completed", {
+          finishedAt: new Date(),
+        });
+        const skippedRun = await getRun(runId);
+        if (skippedRun) {
+          await appendRunEvent(skippedRun, 1, {
+            eventType: "lifecycle",
+            stream: "system",
+            level: "info",
+            message: "Skipped execution: No assigned issues in todo, in_progress, or blocked status.",
+          });
+          await releaseIssueExecutionAndPromote(skippedRun);
+        }
+        await finalizeAgentStatus(agent.id, "succeeded");
+        return;
+      }
+    }
+
     const sessionCodec = getAdapterSessionCodec(agent.adapterType);
     const issueId = readNonEmptyString(context.issueId);
     const issueContext = issueId
@@ -2512,6 +2548,24 @@ export function heartbeatService(db: Db) {
           "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
         );
       }
+      // Hierarchical instructions from DB
+      const company = await db
+        .select({ systemPrompt: companies.systemPrompt })
+        .from(companies)
+        .where(eq(companies.id, agent.companyId))
+        .then((rows) => rows[0] ?? null);
+
+      const hierarchicalInstructions = [
+        company?.systemPrompt,
+        agent.rolePrompt,
+      ]
+        .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+        .join("\n\n---\n\n");
+
+      if (hierarchicalInstructions.length > 0) {
+        context.paperclipHierarchicalInstructions = hierarchicalInstructions;
+      }
+
       const adapterResult = await adapter.execute({
         runId: run.id,
         agent,
@@ -2826,6 +2880,7 @@ export function heartbeatService(db: Db) {
         .select({
           id: issues.id,
           companyId: issues.companyId,
+          status: issues.status,
         })
         .from(issues)
         .where(and(eq(issues.companyId, run.companyId), eq(issues.executionRunId, run.id)))
@@ -2833,14 +2888,27 @@ export function heartbeatService(db: Db) {
 
       if (!issue) return;
 
+      // If the run succeeded but the agent never explicitly closed the issue,
+      // reset it from in_progress back to todo so it can be picked up again.
+      // Only applies on succeeded runs: failed runs preserve checkoutRunId so
+      // the agent can reconnect to the same issue on the next wakeup (process
+      // loss recovery). On success there is no reconnect — the agent is done,
+      // so an unclosed in_progress issue is a leaked checkout.
+      const statusPatch: { executionRunId: null; executionAgentNameKey: null; executionLockedAt: null; updatedAt: Date; status?: string; checkoutRunId?: null; startedAt?: null } = {
+        executionRunId: null,
+        executionAgentNameKey: null,
+        executionLockedAt: null,
+        updatedAt: new Date(),
+      };
+      if (issue.status === "in_progress" && run.status === "succeeded") {
+        statusPatch.status = "todo";
+        statusPatch.checkoutRunId = null;
+        statusPatch.startedAt = null;
+      }
+
       await tx
         .update(issues)
-        .set({
-          executionRunId: null,
-          executionAgentNameKey: null,
-          executionLockedAt: null,
-          updatedAt: new Date(),
-        })
+        .set(statusPatch)
         .where(eq(issues.id, issue.id));
 
       while (true) {

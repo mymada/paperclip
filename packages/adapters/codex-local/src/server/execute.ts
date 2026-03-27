@@ -170,11 +170,7 @@ export async function ensureCodexSkillsInjected(
         const resolvedLinkedPath = linkedPath
           ? path.resolve(path.dirname(target), linkedPath)
           : null;
-        if (
-          resolvedLinkedPath &&
-          resolvedLinkedPath !== entry.source &&
-          (await isLikelyPaperclipRuntimeSkillPath(resolvedLinkedPath, entry.runtimeName))
-        ) {
+        if (resolvedLinkedPath && resolvedLinkedPath !== entry.source) {
           await fs.unlink(target);
           if (linkSkill) {
             await linkSkill(entry.source, target);

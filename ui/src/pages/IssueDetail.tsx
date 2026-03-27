@@ -20,6 +20,7 @@ import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils"
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
+import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
 import { IssueProperties } from "../components/IssueProperties";
 import { LiveRunWidget } from "../components/LiveRunWidget";
 import type { MentionOption } from "../components/MarkdownEditor";
@@ -205,6 +206,7 @@ export function IssueDetail() {
   const { pushToast } = useToast();
   const [moreOpen, setMoreOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [previewDocKey, setPreviewDocKey] = useState<string | null>(null);
   const [mobilePropsOpen, setMobilePropsOpen] = useState(false);
   const [detailTab, setDetailTab] = useState("comments");
   const [secondaryOpen, setSecondaryOpen] = useState({
@@ -854,19 +856,42 @@ export function IssueDetail() {
           className="text-xl font-bold"
         />
 
-        <InlineEditor
-          value={issue.description ?? ""}
-          onSave={(description) => updateIssue.mutateAsync({ description })}
-          as="p"
-          className="text-[15px] leading-7 text-foreground"
-          placeholder="Add a description..."
-          multiline
-          mentions={mentionOptions}
-          imageUploadHandler={async (file) => {
-            const attachment = await uploadAttachment.mutateAsync(file);
-            return attachment.contentPath;
+        {/* onClick délégué : intercepte les liens #document-<key> pour ouvrir la modale */}
+        <div
+          onClick={(e) => {
+            const a = (e.target as HTMLElement).closest("a");
+            if (!a) return;
+            const href = a.getAttribute("href") ?? "";
+            if (href.startsWith("#document-")) {
+              e.preventDefault();
+              setPreviewDocKey(href.slice("#document-".length));
+            }
           }}
-        />
+        >
+          <InlineEditor
+            value={issue.description ?? ""}
+            onSave={(description) => updateIssue.mutateAsync({ description })}
+            as="p"
+            className="text-[15px] leading-7 text-foreground"
+            placeholder="Add a description..."
+            multiline
+            mentions={mentionOptions}
+            imageUploadHandler={async (file) => {
+              const attachment = await uploadAttachment.mutateAsync(file);
+              return attachment.contentPath;
+            }}
+          />
+        </div>
+
+        {previewDocKey && (
+          <DocumentPreviewModal
+            issueId={issue.id}
+            issueTitle={issue.title}
+            open={!!previewDocKey}
+            onOpenChange={(open) => { if (!open) setPreviewDocKey(null); }}
+            initialKey={previewDocKey}
+          />
+        )}
       </div>
 
       <PluginSlotOutlet
