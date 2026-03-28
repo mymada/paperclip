@@ -23,6 +23,8 @@ import { activityRoutes } from "./routes/activity.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
+import { backupRoutes } from "./routes/backup.js";
+import type { BackupSchedulerState, BackupLastResult, BackupLastError, BackupConfigSnapshot } from "./index.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
@@ -73,11 +75,22 @@ export async function createApp(
     localPluginDir?: string;
     betterAuthHandler?: express.RequestHandler;
     resolveSession?: (req: ExpressRequest) => Promise<BetterAuthSessionResult | null>;
+    backup?: {
+      backupDir: string;
+      connectionString: string;
+      instanceRoot: string;
+      getScheduler: () => BackupSchedulerState | null;
+      getLastResult: () => BackupLastResult | null;
+      getLastError: () => BackupLastError | null;
+      getConfig: () => BackupConfigSnapshot | null;
+    };
   },
 ) {
   const app = express();
 
   app.use(express.json({
+    // Company import/export payloads can inline full portable packages.
+    limit: "10mb",
     verify: (req, _res, buf) => {
       (req as unknown as { rawBody: Buffer }).rawBody = buf;
     },
@@ -151,6 +164,9 @@ export async function createApp(
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(instanceSettingsRoutes(db));
+  if (opts.backup) {
+    api.use("/backup", backupRoutes(opts.backup));
+  }
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

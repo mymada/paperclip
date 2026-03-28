@@ -30,6 +30,7 @@ import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineSe
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import { resolvePaperclipInstanceRoot } from "./home-paths.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -83,7 +84,7 @@ export interface BackupLastResult {
 
 export interface BackupLastError {
   message: string;
-  timestamp: Date;
+  occurredAt: Date;
 }
 
 export interface BackupSchedulerState {
@@ -260,6 +261,10 @@ export async function startServer(): Promise<StartedServer> {
     }
   }
   
+  let lastBackupResult: BackupLastResult | null = null;
+  let lastBackupError: BackupLastError | null = null;
+  let backupSchedulerState: BackupSchedulerState | null = null;
+
   let db;
   let embeddedPostgres: EmbeddedPostgresInstance | null = null;
   let embeddedPostgresStartedByThisProcess = false;
@@ -522,6 +527,25 @@ export async function startServer(): Promise<StartedServer> {
     companyDeletionEnabled: config.companyDeletionEnabled,
     betterAuthHandler,
     resolveSession,
+    backup: config.databaseBackupEnabled ? {
+      backupDir: config.databaseBackupDir,
+      connectionString: activeDatabaseConnectionString,
+      instanceRoot: resolvePaperclipInstanceRoot(),
+      getScheduler: () => backupSchedulerState,
+      getLastResult: () => lastBackupResult,
+      getLastError: () => lastBackupError,
+      getConfig: () => ({
+        enabled: config.databaseBackupEnabled,
+        intervalMinutes: config.databaseBackupIntervalMinutes,
+        retentionDays: config.databaseBackupRetentionDays,
+        backupDir: config.databaseBackupDir,
+        compression: false,
+        gfsEnabled: false,
+        gfsHourlyCount: 0,
+        gfsDailyCount: 0,
+        gfsWeeklyCount: 0,
+      }),
+    } : undefined,
   });
   const server = createServer(app as unknown as Parameters<typeof createServer>[0]);
   
@@ -605,13 +629,13 @@ export async function startServer(): Promise<StartedServer> {
   if (config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;
-  
+
     const runScheduledBackup = async () => {
       if (backupInFlight) {
         logger.warn("Skipping scheduled database backup because a previous backup is still running");
         return;
       }
-  
+
       backupInFlight = true;
       try {
         const result = await runDatabaseBackup({
@@ -620,6 +644,16 @@ export async function startServer(): Promise<StartedServer> {
           retentionDays: config.databaseBackupRetentionDays,
           filenamePrefix: "paperclip",
         });
+        lastBackupResult = {
+          completedAt: new Date(),
+          backupDir: config.databaseBackupDir,
+          dbSizeBytes: result.sizeBytes,
+          filesSizeBytes: 0,
+          totalSizeBytes: result.sizeBytes,
+          prunedCount: result.prunedCount,
+          includedDirs: ["db"],
+        };
+        lastBackupError = null;
         logger.info(
           {
             backupFile: result.backupFile,
@@ -631,12 +665,22 @@ export async function startServer(): Promise<StartedServer> {
           `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
         );
       } catch (err) {
+        lastBackupError = {
+          message: err instanceof Error ? err.message : String(err),
+          occurredAt: new Date(),
+        };
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
       } finally {
         backupInFlight = false;
       }
     };
-  
+
+    backupSchedulerState = {
+      intervalMs: backupIntervalMs,
+      isInFlight: () => backupInFlight,
+      runNow: runScheduledBackup,
+    };
+
     logger.info(
       {
         intervalMinutes: config.databaseBackupIntervalMinutes,
