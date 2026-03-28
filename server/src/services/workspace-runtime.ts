@@ -960,3 +960,55 @@ export function buildWorkspaceReadyComment(input: {
   }
   return lines.join("\n");
 }
+
+export async function stopRuntimeServicesForExecutionWorkspace(input: {
+  db: Db;
+  executionWorkspaceId: string;
+  workspaceCwd: string | null;
+}) {
+  const acquired = runtimeServiceLeasesByRun.get(input.executionWorkspaceId) ?? [];
+  for (const serviceId of acquired) {
+    const record = runtimeServicesById.get(serviceId);
+    if (!record) continue;
+    record.leaseRunIds.delete(input.executionWorkspaceId);
+    if (record.leaseRunIds.size === 0) {
+      await stopRuntimeService(serviceId);
+    }
+  }
+}
+
+export async function cleanupExecutionWorkspaceArtifacts(input: {
+  workspace: RealizedExecutionWorkspace | { id: string; cwd: string | null };
+  projectWorkspace: { cwd: string | null; cleanupCommand: string | null } | null;
+  teardownCommand: string | null;
+  recorder: unknown;
+}) {
+  const warnings: string[] = [];
+  let cleaned = true;
+
+  try {
+    if (input.teardownCommand && input.workspace.cwd) {
+      const child = spawn("bash", ["-c", input.teardownCommand], {
+        cwd: input.workspace.cwd,
+        stdio: "pipe",
+      });
+      await new Promise<void>((resolve) => {
+        child.on("close", (code) => {
+          if (code !== 0) {
+            warnings.push(`Teardown command failed with exit code ${code}`);
+          }
+          resolve();
+        });
+        child.on("error", (err) => {
+          warnings.push(`Teardown command error: ${err.message}`);
+          resolve();
+        });
+      });
+    }
+  } catch (error) {
+    warnings.push(`Cleanup error: ${error instanceof Error ? error.message : String(error)}`);
+    cleaned = false;
+  }
+
+  return { cleaned, warnings };
+}

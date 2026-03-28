@@ -11,6 +11,7 @@ import {
   heartbeatRuns,
   executionWorkspaces,
   issueAttachments,
+  issueInboxArchives,
   issueLabels,
   issueComments,
   issueDocuments,
@@ -66,6 +67,7 @@ export interface IssueFilters {
   participantAgentId?: string;
   assigneeUserId?: string;
   touchedByUserId?: string;
+  inboxArchivedByUserId?: string;
   unreadForUserId?: string;
   projectId?: string;
   parentId?: string;
@@ -706,6 +708,31 @@ export function issueService(db: Db) {
       return row;
     },
 
+    archiveInbox: async (companyId: string, issueId: string, userId: string, archivedAt: Date = new Date()) => {
+      const now = new Date();
+      const [row] = await db
+        .insert(issueInboxArchives)
+        .values({ companyId, issueId, userId, archivedAt, updatedAt: now })
+        .onConflictDoUpdate({
+          target: [issueInboxArchives.companyId, issueInboxArchives.issueId, issueInboxArchives.userId],
+          set: { archivedAt, updatedAt: now },
+        })
+        .returning();
+      return row;
+    },
+
+    unarchiveInbox: async (companyId: string, issueId: string, userId: string) => {
+      const [row] = await db
+        .delete(issueInboxArchives)
+        .where(and(
+          eq(issueInboxArchives.companyId, companyId),
+          eq(issueInboxArchives.issueId, issueId),
+          eq(issueInboxArchives.userId, userId),
+        ))
+        .returning();
+      return row ?? null;
+    },
+
     getById: async (id: string) => {
       const row = await db
         .select()
@@ -1324,6 +1351,24 @@ export function issueService(db: Db) {
           return comment ? redactIssueComment(comment, censorUsernameInLogs) : null;
         })),
 
+    updateComment: async (commentId: string, body: string) => {
+      const redactedBody = redactCurrentUserText(body);
+      const [updated] = await db
+        .update(issueComments)
+        .set({ body: redactedBody, updatedAt: new Date() })
+        .where(eq(issueComments.id, commentId))
+        .returning();
+      if (!updated) throw notFound("Comment not found");
+
+      // Update issue's updatedAt so comment activity is reflected in recency sorting
+      await db
+        .update(issues)
+        .set({ updatedAt: new Date() })
+        .where(eq(issues.id, updated.issueId));
+
+      return redactIssueComment(updated, false);
+    },
+
     addComment: async (issueId: string, body: string, actor: { agentId?: string; userId?: string }) => {
       const issue = await db
         .select({ companyId: issues.companyId })
@@ -1573,6 +1618,25 @@ export function issueService(db: Db) {
         );
       const valid = new Set(rows.map((row) => row.id));
       return [...mentionedIds].filter((projectId) => valid.has(projectId));
+    },
+
+    countActiveIssuesForAgent: async (agentId: string, companyId: string) => {
+      const rows = await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.assigneeAgentId, agentId),
+            eq(issues.companyId, companyId),
+            inArray(issues.status, ["in_progress", "in_review"]),
+          ),
+        );
+      return rows.length;
+    },
+
+    findDependentsToWake: async (_resolvedIssueId: string, _companyId: string) => {
+      // dependsOnIssueId column not yet in schema — return empty until migration added
+      return [] as Array<{ id: string; assigneeAgentId: string | null }>;
     },
 
     getAncestors: async (issueId: string) => {

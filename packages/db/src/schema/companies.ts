@@ -11,7 +11,6 @@ export const companies = pgTable(
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     issuePrefix: text("issue_prefix").notNull().default("PAP"),
     issueCounter: integer("issue_counter").notNull().default(0),
-    systemPrompt: text("system_prompt"),
     budgetMonthlyCents: integer("budget_monthly_cents").notNull().default(0),
     spentMonthlyCents: integer("spent_monthly_cents").notNull().default(0),
     requireBoardApprovalForNewAgents: boolean("require_board_approval_for_new_agents")

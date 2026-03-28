@@ -3,16 +3,18 @@ import { ISSUE_PRIORITIES, ISSUE_STATUSES } from "../constants.js";
 
 const executionWorkspaceStrategySchema = z
   .object({
-    type: z.enum(["project_primary", "git_worktree"]).optional(),
+    type: z.enum(["project_primary", "git_worktree", "adapter_managed", "cloud_sandbox"]).optional(),
     baseRef: z.string().optional().nullable(),
     branchTemplate: z.string().optional().nullable(),
     worktreeParentDir: z.string().optional().nullable(),
+    provisionCommand: z.string().optional().nullable(),
+    teardownCommand: z.string().optional().nullable(),
   })
   .strict();
 
 export const issueExecutionWorkspaceSettingsSchema = z
   .object({
-    mode: z.enum(["inherit", "project_primary", "isolated", "agent_default"]).optional(),
+    mode: z.enum(["inherit", "shared_workspace", "isolated_workspace", "operator_branch", "reuse_existing", "agent_default"]).optional(),
     workspaceStrategy: executionWorkspaceStrategySchema.optional().nullable(),
     workspaceRuntime: z.record(z.unknown()).optional().nullable(),
   })
@@ -39,6 +41,15 @@ export const createIssueSchema = z.object({
   requestDepth: z.number().int().nonnegative().optional().default(0),
   billingCode: z.string().optional().nullable(),
   assigneeAdapterOverrides: issueAssigneeAdapterOverridesSchema.optional().nullable(),
+  executionWorkspaceId: z.string().uuid().optional().nullable(),
+  executionWorkspacePreference: z.enum([
+    "inherit",
+    "shared_workspace",
+    "isolated_workspace",
+    "operator_branch",
+    "reuse_existing",
+    "agent_default",
+  ]).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
 });

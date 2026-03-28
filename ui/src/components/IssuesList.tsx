@@ -150,6 +150,7 @@ interface IssuesListProps {
   isLoading?: boolean;
   error?: Error | null;
   agents?: Agent[];
+  projects?: unknown[];
   liveIssueIds?: Set<string>;
   projectId?: string;
   viewStateKey: string;
@@ -158,6 +159,7 @@ interface IssuesListProps {
   initialSearch?: string;
   onSearchChange?: (search: string) => void;
   onUpdateIssue: (id: string, data: Record<string, unknown>) => void;
+  searchFilters?: Record<string, unknown>;
 }
 
 export function IssuesList({

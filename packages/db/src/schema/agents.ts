@@ -20,7 +20,6 @@ export const agents = pgTable(
     title: text("title"),
     icon: text("icon"),
     status: text("status").notNull().default("idle"),
-    rolePrompt: text("role_prompt"),
     reportsTo: uuid("reports_to").references((): AnyPgColumn => agents.id),
     capabilities: text("capabilities"),
     adapterType: text("adapter_type").notNull().default("process"),

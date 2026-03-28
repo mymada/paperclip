@@ -1,8 +1,5 @@
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
-import {
-  DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
-  DEFAULT_GEMINI_LOCAL_MODEL,
-} from "../index.js";
+import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
   return value
@@ -71,7 +68,7 @@ export function buildGeminiLocalConfig(v: CreateConfigValues): Record<string, un
     }
   }
   if (Object.keys(env).length > 0) ac.env = env;
-  ac.sandbox = !(v.dangerouslyBypassSandbox ?? DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX);
+  ac.sandbox = !v.dangerouslyBypassSandbox;
 
   if (v.command) ac.command = v.command;
   if (v.extraArgs) ac.extraArgs = parseCommaArgs(v.extraArgs);

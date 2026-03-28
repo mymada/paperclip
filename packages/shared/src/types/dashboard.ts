@@ -12,11 +12,6 @@ export interface DashboardSummary {
     blocked: number;
     done: number;
   };
-  issues: {
-    criticalCount: number;
-    stalledCount: number;
-    doneThisWeekCount: number;
-  };
   costs: {
     monthSpendCents: number;
     monthBudgetCents: number;

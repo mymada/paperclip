@@ -20,7 +20,6 @@ import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils"
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
-import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
 import { LiveRunWidget } from "../components/LiveRunWidget";
@@ -64,17 +63,17 @@ type CommentReassignment = {
 };
 
 const ACTION_LABELS: Record<string, string> = {
-  "issue.created": "created the task",
-  "issue.updated": "updated the task",
-  "issue.checked_out": "checked out the task",
-  "issue.released": "released the task",
+  "issue.created": "created the issue",
+  "issue.updated": "updated the issue",
+  "issue.checked_out": "checked out the issue",
+  "issue.released": "released the issue",
   "issue.comment_added": "added a comment",
   "issue.attachment_added": "added an attachment",
   "issue.attachment_removed": "removed an attachment",
   "issue.document_created": "created a document",
   "issue.document_updated": "updated a document",
   "issue.document_deleted": "deleted a document",
-  "issue.deleted": "deleted the task",
+  "issue.deleted": "deleted the issue",
   "agent.created": "created an agent",
   "agent.updated": "updated the agent",
   "agent.paused": "paused the agent",
@@ -165,8 +164,8 @@ function formatAction(action: string, details?: Record<string, unknown> | null):
     if (details.assigneeAgentId !== undefined || details.assigneeUserId !== undefined) {
       parts.push(
         details.assigneeAgentId || details.assigneeUserId
-          ? "assigned the task"
-          : "unassigned the task",
+          ? "assigned the issue"
+          : "unassigned the issue",
       );
     }
     if (details.title !== undefined) parts.push("updated the title");
@@ -214,7 +213,6 @@ export function IssueDetail() {
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadIssueIdRef = useRef<string | null>(null);
 
@@ -272,7 +270,7 @@ export function IssueDetail() {
 
   const hasLiveRuns = (liveRuns ?? []).length > 0 || !!activeRun;
   const sourceBreadcrumb = useMemo(
-    () => readIssueDetailBreadcrumb(location.state) ?? { label: "Tasks", href: "/issues" },
+    () => readIssueDetailBreadcrumb(location.state) ?? { label: "Issues", href: "/issues" },
     [location.state],
   );
 
@@ -499,14 +497,6 @@ export function IssueDetail() {
     },
   });
 
-  const editComment = useMutation({
-    mutationFn: ({ commentId, body }: { commentId: string; body: string }) =>
-      issuesApi.updateComment(issueId!, commentId, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId!) });
-    },
-  });
-
   const addCommentAndReassign = useMutation({
     mutationFn: ({
       body,
@@ -581,7 +571,7 @@ export function IssueDetail() {
   });
 
   useEffect(() => {
-    const titleLabel = issue?.title ?? issueId ?? "Task";
+    const titleLabel = issue?.title ?? issueId ?? "Issue";
     setBreadcrumbs([
       sourceBreadcrumb,
       { label: hasLiveRuns ? `🔵 ${titleLabel}` : titleLabel },
@@ -611,14 +601,6 @@ export function IssueDetail() {
     return () => closePanel();
   }, [issue]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    return () => {
-      if (copiedTimerRef.current !== null) {
-        clearTimeout(copiedTimerRef.current);
-      }
-    };
-  }, []);
-
   const copyIssueToClipboard = async () => {
     if (!issue) return;
     const decodeEntities = (text: string) => {
@@ -632,13 +614,7 @@ export function IssueDetail() {
     await navigator.clipboard.writeText(md);
     setCopied(true);
     pushToast({ title: "Copied to clipboard", tone: "success" });
-    if (copiedTimerRef.current !== null) {
-      clearTimeout(copiedTimerRef.current);
-    }
-    copiedTimerRef.current = setTimeout(() => {
-      setCopied(false);
-      copiedTimerRef.current = null;
-    }, 2000);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading...</p>;
@@ -813,7 +789,7 @@ export function IssueDetail() {
               variant="ghost"
               size="icon-xs"
               onClick={copyIssueToClipboard}
-              title="Copy task as markdown"
+              title="Copy issue as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -832,7 +808,7 @@ export function IssueDetail() {
               variant="ghost"
               size="icon-xs"
               onClick={copyIssueToClipboard}
-              title="Copy task as markdown"
+              title="Copy issue as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -881,42 +857,19 @@ export function IssueDetail() {
           className="text-xl font-bold"
         />
 
-        {/* onClick délégué : intercepte les liens #document-<key> pour ouvrir la modale */}
-        <div
-          onClick={(e) => {
-            const a = (e.target as HTMLElement).closest("a");
-            if (!a) return;
-            const href = a.getAttribute("href") ?? "";
-            if (href.startsWith("#document-")) {
-              e.preventDefault();
-              setPreviewDocKey(href.slice("#document-".length));
-            }
+        <InlineEditor
+          value={issue.description ?? ""}
+          onSave={(description) => updateIssue.mutateAsync({ description })}
+          as="p"
+          className="text-[15px] leading-7 text-foreground"
+          placeholder="Add a description..."
+          multiline
+          mentions={mentionOptions}
+          imageUploadHandler={async (file) => {
+            const attachment = await uploadAttachment.mutateAsync(file);
+            return attachment.contentPath;
           }}
-        >
-          <InlineEditor
-            value={issue.description ?? ""}
-            onSave={(description) => updateIssue.mutateAsync({ description })}
-            as="p"
-            className="text-[15px] leading-7 text-foreground"
-            placeholder="Add a description..."
-            multiline
-            mentions={mentionOptions}
-            imageUploadHandler={async (file) => {
-              const attachment = await uploadAttachment.mutateAsync(file);
-              return attachment.contentPath;
-            }}
-          />
-        </div>
-
-        {previewDocKey && (
-          <DocumentPreviewModal
-            issueId={issue.id}
-            issueTitle={issue.title}
-            open={!!previewDocKey}
-            onOpenChange={(open) => { if (!open) setPreviewDocKey(null); }}
-            initialKey={previewDocKey}
-          />
-        )}
+        />
       </div>
 
       <PluginSlotOutlet
@@ -1057,7 +1010,7 @@ export function IssueDetail() {
           </TabsTrigger>
           <TabsTrigger value="subissues" className="gap-1.5">
             <ListTree className="h-3.5 w-3.5" />
-            Sub-tasks
+            Sub-issues
           </TabsTrigger>
           <TabsTrigger value="activity" className="gap-1.5">
             <ActivityIcon className="h-3.5 w-3.5" />
@@ -1084,9 +1037,6 @@ export function IssueDetail() {
             currentAssigneeValue={actualAssigneeValue}
             suggestedAssigneeValue={suggestedAssigneeValue}
             mentions={mentionOptions}
-            onEdit={async (commentId, body) => {
-              await editComment.mutateAsync({ commentId, body });
-            }}
             onAdd={async (body, reopen, reassignment) => {
               if (reassignment) {
                 await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });

@@ -83,7 +83,7 @@ export function backupRoutes(opts: {
         lastError: lastError ?? null,
         nextScheduledAt: nextBackupAt,
       },
-      backups: backups.map((b) => ({
+      backups: backups.map((b: { name: string; path: string; createdAt: Date; sizeBytes: number }) => ({
         name: b.name,
         path: b.path,
         createdAt: b.createdAt,
@@ -91,7 +91,7 @@ export function backupRoutes(opts: {
         sizeMb: Math.round(b.sizeBytes / 1024 / 1024 * 10) / 10,
       })),
       totalBackups: backups.length,
-      totalSizeBytes: backups.reduce((sum, b) => sum + b.sizeBytes, 0),
+      totalSizeBytes: backups.reduce((sum: number, b: { name: string; path: string; createdAt: Date; sizeBytes: number }) => sum + b.sizeBytes, 0),
     });
   });
 
@@ -161,7 +161,7 @@ export function backupRoutes(opts: {
     }
 
     const backups = listFullBackups(opts.backupDir);
-    const entry = backups.find((b) => b.name === name);
+    const entry = backups.find((b: { name: string; path: string; createdAt: Date; sizeBytes: number }) => b.name === name);
 
     if (!entry) {
       res.status(404).json({ error: "Backup not found" });
@@ -209,7 +209,7 @@ export function backupRoutes(opts: {
     }
 
     const backups = listFullBackups(opts.backupDir);
-    const entry = backups.find((b) => b.name === name);
+    const entry = backups.find((b: { name: string; path: string; createdAt: Date; sizeBytes: number }) => b.name === name);
 
     if (!entry) {
       res.status(404).json({ error: "Backup not found" });
@@ -307,7 +307,7 @@ export function backupRoutes(opts: {
     }
 
     const backups = listFullBackups(opts.backupDir);
-    const entry = backups.find((b) => b.name === name);
+    const entry = backups.find((b: { name: string; path: string; createdAt: Date; sizeBytes: number }) => b.name === name);
 
     if (!entry) {
       res.status(404).json({ error: "Backup not found" });

@@ -3016,5 +3016,9 @@ export function heartbeatService(db: Db) {
         .limit(1);
       return run ?? null;
     },
+
+    reportRunActivity: async (_runId: string) => {
+      // Placeholder for activity tracking
+    },
   };
 }

@@ -59,6 +59,38 @@ type EmbeddedPostgresCtor = new (opts: {
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
 
+export interface BackupConfigSnapshot {
+  enabled: boolean;
+  intervalMinutes: number;
+  retentionDays: number;
+  backupDir: string;
+  compression: boolean;
+  gfsEnabled: boolean;
+  gfsHourlyCount: number;
+  gfsDailyCount: number;
+  gfsWeeklyCount: number;
+}
+
+export interface BackupLastResult {
+  completedAt: Date;
+  backupDir: string;
+  dbSizeBytes: number;
+  filesSizeBytes: number;
+  totalSizeBytes: number;
+  prunedCount: number;
+  includedDirs: string[];
+}
+
+export interface BackupLastError {
+  message: string;
+  timestamp: Date;
+}
+
+export interface BackupSchedulerState {
+  intervalMs: number;
+  isInFlight(): boolean;
+  runNow(): Promise<void>;
+}
 
 export interface StartedServer {
   server: ReturnType<typeof createServer>;

@@ -33,11 +33,13 @@ export function BudgetPolicyCard({
   onSave,
   isSaving,
   compact = false,
+  variant: _variant,
 }: {
   summary: BudgetPolicySummary;
   onSave?: (amountCents: number) => void;
   isSaving?: boolean;
   compact?: boolean;
+  variant?: string;
 }) {
   const [draftBudget, setDraftBudget] = useState(centsInputValue(summary.amount));
 

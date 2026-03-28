@@ -101,7 +101,6 @@ export function dashboardService(db: Db) {
         companyRow.budgetMonthlyCents > 0
           ? (monthSpendCents / companyRow.budgetMonthlyCents) * 100
           : 0;
-      const budgetOverview = await budgets.overview(companyId);
 
       return {
         companyId,

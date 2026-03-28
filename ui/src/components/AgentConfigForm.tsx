@@ -16,10 +16,7 @@ import {
   DEFAULT_CODEX_LOCAL_MODEL,
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
-import {
-  DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
-  DEFAULT_GEMINI_LOCAL_MODEL,
-} from "@paperclipai/adapter-gemini-local";
+import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import {
   Popover,
   PopoverContent,
@@ -44,7 +41,6 @@ import {
 import { defaultCreateValues } from "./agent-config-defaults";
 import { getUIAdapter } from "../adapters";
 import { ClaudeLocalAdvancedFields } from "../adapters/claude-local/config-fields";
-import { BillingModeField } from "../adapters/billing-mode-field";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { ChoosePathButton } from "./PathInstructionsModal";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
@@ -66,6 +62,10 @@ type AgentConfigFormProps = {
   onSaveActionChange?: (save: (() => void) | null) => void;
   onCancelActionChange?: (cancel: (() => void) | null) => void;
   hideInlineSave?: boolean;
+  showAdapterTypeField?: boolean;
+  showAdapterTestEnvironmentButton?: boolean;
+  showCreateRunPolicySection?: boolean;
+  hideInstructionsFile?: boolean;
   /** Hide the prompt template field from the Identity section (used when it's shown in a separate Prompts tab). */
   hidePromptTemplate?: boolean;
   /** "cards" renders each section as heading + bordered card (for settings pages). Default: "inline" (border-b dividers). */
@@ -557,7 +557,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
                       nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
-                      nextValues.dangerouslyBypassSandbox = DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX;
                     } else if (t === "cursor") {
                       nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
                     } else if (t === "opencode_local") {
@@ -588,11 +587,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                               dangerouslyBypassApprovalsAndSandbox:
                                 DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
                             }
-                          : t === "gemini_local"
-                            ? {
-                                sandbox: !DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
-                              }
-                            : {}),
+                          : {}),
                       },
                     }));
                   }
@@ -777,8 +772,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               {adapterType === "claude_local" && (
                 <ClaudeLocalAdvancedFields {...adapterFieldProps} />
               )}
-
-              {isLocal && <BillingModeField {...adapterFieldProps} />}
 
               <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
                 <DraftInput

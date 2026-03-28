@@ -68,14 +68,14 @@ export function Issues() {
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
-        "Tasks",
+        "Issues",
         `${location.pathname}${location.search}${location.hash}`,
       ),
     [location.pathname, location.search, location.hash],
   );
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Tasks" }]);
+    setBreadcrumbs([{ label: "Issues" }]);
   }, [setBreadcrumbs]);
 
   const { data: issues, isLoading, error } = useQuery({
@@ -93,7 +93,7 @@ export function Issues() {
   });
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={CircleDot} message="Select a company to view tasks." />;
+    return <EmptyState icon={CircleDot} message="Select a company to view issues." />;
   }
 
   return (
