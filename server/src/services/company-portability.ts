@@ -1475,7 +1475,7 @@ function normalizePortableConfig(
       key === "instructionsRootPath" ||
       key === "instructionsEntryFile" ||
       key === "promptTemplate" ||
-      key === "bootstrapPromptTemplate" || // deprecated — kept for backward compat
+      key === "bootstrapPromptTemplate" ||
       key === "paperclipSkillSync"
     ) continue;
     if (key === "env") continue;
@@ -2929,14 +2929,6 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         .filter((slug): slug is string => Boolean(slug)),
     });
 
-    const includes: string[] = [];
-    for (const filePath of Object.keys(files)) {
-      if (filePath === "COMPANY.md" || filePath === ".paperclip.yaml" || filePath === "README.md" || filePath.startsWith("images/")) {
-        continue;
-      }
-      includes.push(filePath);
-    }
-
     const companyPath = "COMPANY.md";
     files[companyPath] = buildMarkdown(
       {
@@ -2944,7 +2936,6 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         description: company.description ?? null,
         schema: "agentcompanies/v1",
         slug: rootPath,
-        includes: includes.length > 0 ? includes.sort() : undefined,
       },
       "",
     );
@@ -3879,7 +3870,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         if (typeof markdownRaw === "string") {
           const importedInstructionsBody = parseFrontmatterMarkdown(markdownRaw).body;
           bundleFiles[entryRelativePath] = importedInstructionsBody;
-          if (entryRelativePath !== "AGENTS.md") {
+          if (entryRelativePath !== "AGENTS.md" && !bundleFiles["AGENTS.md"]) {
             bundleFiles["AGENTS.md"] = importedInstructionsBody;
           }
         }
@@ -3904,7 +3895,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           desiredSkills,
         );
         delete adapterConfigWithSkills.promptTemplate;
-        delete adapterConfigWithSkills.bootstrapPromptTemplate; // deprecated
+        delete adapterConfigWithSkills.bootstrapPromptTemplate;
         delete adapterConfigWithSkills.instructionsFilePath;
         delete adapterConfigWithSkills.instructionsBundleMode;
         delete adapterConfigWithSkills.instructionsRootPath;
