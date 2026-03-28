@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import type { Issue } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { X } from "lucide-react";
@@ -23,7 +23,8 @@ interface IssueRowProps {
   className?: string;
 }
 
-export function IssueRow({
+// ⚡ Bolt: Memoized IssueRow to prevent unnecessary re-renders in long lists like IssuesList and Inbox
+export const IssueRow = React.memo(function IssueRow({
   issue,
   issueLinkState,
   mobileLeading,
@@ -145,4 +146,4 @@ export function IssueRow({
       ) : null}
     </Link>
   );
-}
+});
