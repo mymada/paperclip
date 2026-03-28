@@ -111,10 +111,6 @@ function makeRun(id: string, status: HeartbeatRun["status"], createdAt: string, 
     logCompressed: false,
     errorCode: null,
     externalRunId: null,
-    processPid: null,
-    processStartedAt: null,
-    retryOfRunId: null,
-    processLossRetryCount: 0,
     stdoutExcerpt: null,
     stderrExcerpt: null,
     contextSnapshot: null,
@@ -186,11 +182,6 @@ const dashboard: DashboardSummary = {
     monthBudgetCents: 1000,
     monthUtilizationPercent: 90,
   },
-  issues: {
-    criticalCount: 0,
-    stalledCount: 0,
-    doneThisWeekCount: 0,
-  },
   pendingApprovals: 1,
   budgets: {
     activeIncidents: 0,
@@ -215,7 +206,7 @@ describe("inbox helpers", () => {
         makeRun("run-latest", "timed_out", "2026-03-11T01:00:00.000Z"),
         makeRun("run-other-agent", "failed", "2026-03-11T02:00:00.000Z", "agent-2"),
       ],
-      mineIssues: [makeIssue("1", true)],
+      unreadIssues: [makeIssue("1", true)],
       dismissed: new Set<string>(),
     });
 
@@ -224,7 +215,7 @@ describe("inbox helpers", () => {
       approvals: 1,
       failedRuns: 2,
       joinRequests: 1,
-      mineIssues: 1,
+      unreadTouchedIssues: 1,
       alerts: 1,
     });
   });
@@ -235,7 +226,7 @@ describe("inbox helpers", () => {
       joinRequests: [],
       dashboard,
       heartbeatRuns: [makeRun("run-1", "failed", "2026-03-11T00:00:00.000Z")],
-      mineIssues: [],
+      unreadIssues: [],
       dismissed: new Set<string>(["run:run-1", "alert:budget", "alert:agent-errors"]),
     });
 
@@ -244,7 +235,7 @@ describe("inbox helpers", () => {
       approvals: 0,
       failedRuns: 0,
       joinRequests: 0,
-      mineIssues: 0,
+      unreadTouchedIssues: 0,
       alerts: 0,
     });
   });
@@ -267,11 +258,6 @@ describe("inbox helpers", () => {
       ),
     ];
 
-    expect(getApprovalsForTab(approvals, "mine", "all").map((approval) => approval.id)).toEqual([
-      "approval-revision",
-      "approval-approved",
-      "approval-pending",
-    ]);
     expect(getApprovalsForTab(approvals, "recent", "all").map((approval) => approval.id)).toEqual([
       "approval-revision",
       "approval-approved",
@@ -303,12 +289,7 @@ describe("inbox helpers", () => {
       getInboxWorkItems({
         issues: [olderIssue, newerIssue],
         approvals: [approval],
-      }).map((item) => {
-        if (item.kind === "issue") return `issue:${item.issue.id}`;
-        if (item.kind === "approval") return `approval:${item.approval.id}`;
-        if (item.kind === "join_request") return `join:${item.joinRequest.id}`;
-        return `run:${item.run.id}`;
-      }),
+      }).map((item) => item.kind === "issue" ? `issue:${item.issue.id}` : `approval:${item.approval.id}`),
     ).toEqual([
       "issue:1",
       "approval:approval-between",
@@ -316,53 +297,11 @@ describe("inbox helpers", () => {
     ]);
   });
 
-  it("mixes join requests into the inbox feed by most recent activity", () => {
-    const issue = makeIssue("1", true);
-    issue.lastExternalCommentAt = new Date("2026-03-11T04:00:00.000Z");
-
-    const joinRequest = makeJoinRequest("join-1");
-    joinRequest.createdAt = new Date("2026-03-11T03:00:00.000Z");
-
-    const approval = makeApprovalWithTimestamps(
-      "approval-oldest",
-      "pending",
-      "2026-03-11T02:00:00.000Z",
-    );
-
-    expect(
-      getInboxWorkItems({
-        issues: [issue],
-        approvals: [approval],
-        joinRequests: [joinRequest],
-      }).map((item) => {
-        if (item.kind === "issue") return `issue:${item.issue.id}`;
-        if (item.kind === "approval") return `approval:${item.approval.id}`;
-        if (item.kind === "join_request") return `join:${item.joinRequest.id}`;
-        return `run:${item.run.id}`;
-      }),
-    ).toEqual([
-      "issue:1",
-      "join:join-1",
-      "approval:approval-oldest",
-    ]);
-  });
-
   it("can include sections on recent without forcing them to be unread", () => {
-    expect(
-      shouldShowInboxSection({
-        tab: "mine",
-        hasItems: true,
-        showOnMine: true,
-        showOnRecent: false,
-        showOnUnread: false,
-        showOnAll: false,
-      }),
-    ).toBe(true);
     expect(
       shouldShowInboxSection({
         tab: "recent",
         hasItems: true,
-        showOnMine: false,
         showOnRecent: true,
         showOnUnread: false,
         showOnAll: false,
@@ -372,7 +311,6 @@ describe("inbox helpers", () => {
       shouldShowInboxSection({
         tab: "unread",
         hasItems: true,
-        showOnMine: true,
         showOnRecent: true,
         showOnUnread: false,
         showOnAll: false,
@@ -393,16 +331,16 @@ describe("inbox helpers", () => {
     expect(getUnreadTouchedIssues(recentIssues).map((issue) => issue.id)).toEqual(["1", "2", "3"]);
   });
 
-  it("defaults the remembered inbox tab to mine and persists all", () => {
+  it("defaults the remembered inbox tab to recent and persists all", () => {
     localStorage.clear();
-    expect(loadLastInboxTab()).toBe("mine");
+    expect(loadLastInboxTab()).toBe("recent");
 
     saveLastInboxTab("all");
     expect(loadLastInboxTab()).toBe("all");
   });
 
-  it("maps legacy new-tab storage to mine", () => {
+  it("maps legacy new-tab storage to recent", () => {
     localStorage.setItem("paperclip:inbox:last-tab", "new");
-    expect(loadLastInboxTab()).toBe("mine");
+    expect(loadLastInboxTab()).toBe("recent");
   });
 });

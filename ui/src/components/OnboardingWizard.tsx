@@ -826,6 +826,12 @@ export function OnboardingWizard() {
                             desc: "Local Gemini agent"
                           },
                           {
+                            value: "process" as const,
+                            label: "Process",
+                            icon: Terminal,
+                            desc: "Run a local command"
+                          },
+                          {
                             value: "opencode_local" as const,
                             label: "OpenCode",
                             icon: OpenCodeLogoIcon,
