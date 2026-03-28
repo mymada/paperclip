@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildExecutionWorkspaceAdapterConfig,
   defaultIssueExecutionWorkspaceSettingsForProject,
-  gateProjectExecutionWorkspacePolicy,
-  issueExecutionWorkspaceModeForPersistedWorkspace,
   parseIssueExecutionWorkspaceSettings,
   parseProjectExecutionWorkspacePolicy,
   resolveExecutionWorkspaceMode,
@@ -14,36 +12,36 @@ describe("execution workspace policy helpers", () => {
     expect(
       defaultIssueExecutionWorkspaceSettingsForProject({
         enabled: true,
-        defaultMode: "isolated_workspace",
+        defaultMode: "isolated",
       }),
-    ).toEqual({ mode: "isolated_workspace" });
+    ).toEqual({ mode: "isolated" });
     expect(
       defaultIssueExecutionWorkspaceSettingsForProject({
         enabled: true,
-        defaultMode: "shared_workspace",
+        defaultMode: "project_primary",
       }),
-    ).toEqual({ mode: "shared_workspace" });
+    ).toEqual({ mode: "project_primary" });
     expect(defaultIssueExecutionWorkspaceSettingsForProject(null)).toBeNull();
   });
 
   it("prefers explicit issue mode over project policy and legacy overrides", () => {
     expect(
       resolveExecutionWorkspaceMode({
-        projectPolicy: { enabled: true, defaultMode: "shared_workspace" },
-        issueSettings: { mode: "isolated_workspace" },
+        projectPolicy: { enabled: true, defaultMode: "project_primary" },
+        issueSettings: { mode: "isolated" },
         legacyUseProjectWorkspace: false,
       }),
-    ).toBe("isolated_workspace");
+    ).toBe("isolated");
   });
 
   it("falls back to project policy before legacy project-workspace compatibility flag", () => {
     expect(
       resolveExecutionWorkspaceMode({
-        projectPolicy: { enabled: true, defaultMode: "isolated_workspace" },
+        projectPolicy: { enabled: true, defaultMode: "isolated" },
         issueSettings: null,
         legacyUseProjectWorkspace: false,
       }),
-    ).toBe("isolated_workspace");
+    ).toBe("isolated");
     expect(
       resolveExecutionWorkspaceMode({
         projectPolicy: null,
@@ -60,25 +58,23 @@ describe("execution workspace policy helpers", () => {
       },
       projectPolicy: {
         enabled: true,
-        defaultMode: "isolated_workspace",
+        defaultMode: "isolated",
         workspaceStrategy: {
           type: "git_worktree",
           baseRef: "origin/main",
-          provisionCommand: "bash ./scripts/provision-worktree.sh",
         },
         workspaceRuntime: {
           services: [{ name: "web", command: "pnpm dev" }],
         },
       },
       issueSettings: null,
-      mode: "isolated_workspace",
+      mode: "isolated",
       legacyUseProjectWorkspace: null,
     });
 
     expect(result.workspaceStrategy).toEqual({
       type: "git_worktree",
       baseRef: "origin/main",
-      provisionCommand: "bash ./scripts/provision-worktree.sh",
     });
     expect(result.workspaceRuntime).toEqual({
       services: [{ name: "web", command: "pnpm dev" }],
@@ -94,9 +90,9 @@ describe("execution workspace policy helpers", () => {
     expect(
       buildExecutionWorkspaceAdapterConfig({
         agentConfig: baseConfig,
-        projectPolicy: { enabled: true, defaultMode: "isolated_workspace" },
-        issueSettings: { mode: "shared_workspace" },
-        mode: "shared_workspace",
+        projectPolicy: { enabled: true, defaultMode: "isolated" },
+        issueSettings: { mode: "project_primary" },
+        mode: "project_primary",
         legacyUseProjectWorkspace: null,
       }).workspaceStrategy,
     ).toBeUndefined();
@@ -120,18 +116,14 @@ describe("execution workspace policy helpers", () => {
         workspaceStrategy: {
           type: "git_worktree",
           worktreeParentDir: ".paperclip/worktrees",
-          provisionCommand: "bash ./scripts/provision-worktree.sh",
-          teardownCommand: "bash ./scripts/teardown-worktree.sh",
         },
       }),
     ).toEqual({
       enabled: true,
-      defaultMode: "isolated_workspace",
+      defaultMode: "isolated",
       workspaceStrategy: {
         type: "git_worktree",
         worktreeParentDir: ".paperclip/worktrees",
-        provisionCommand: "bash ./scripts/provision-worktree.sh",
-        teardownCommand: "bash ./scripts/teardown-worktree.sh",
       },
     });
     expect(
@@ -139,32 +131,7 @@ describe("execution workspace policy helpers", () => {
         mode: "project_primary",
       }),
     ).toEqual({
-      mode: "shared_workspace",
+      mode: "project_primary",
     });
-  });
-
-  it("maps persisted execution workspace modes back to issue settings", () => {
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("isolated_workspace")).toBe("isolated_workspace");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("operator_branch")).toBe("operator_branch");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("shared_workspace")).toBe("shared_workspace");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("adapter_managed")).toBe("agent_default");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace("cloud_sandbox")).toBe("agent_default");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace(null)).toBe("agent_default");
-    expect(issueExecutionWorkspaceModeForPersistedWorkspace(undefined)).toBe("agent_default");
-  });
-
-  it("disables project execution workspace policy when the instance flag is off", () => {
-    expect(
-      gateProjectExecutionWorkspacePolicy(
-        { enabled: true, defaultMode: "isolated_workspace" },
-        false,
-      ),
-    ).toBeNull();
-    expect(
-      gateProjectExecutionWorkspacePolicy(
-        { enabled: true, defaultMode: "isolated_workspace" },
-        true,
-      ),
-    ).toEqual({ enabled: true, defaultMode: "isolated_workspace" });
   });
 });

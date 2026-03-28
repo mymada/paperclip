@@ -47,11 +47,7 @@ export const issues = pgTable(
     requestDepth: integer("request_depth").notNull().default(0),
     billingCode: text("billing_code"),
     assigneeAdapterOverrides: jsonb("assignee_adapter_overrides").$type<Record<string, unknown>>(),
-    executionWorkspaceId: uuid("execution_workspace_id")
-      .references((): AnyPgColumn => executionWorkspaces.id, { onDelete: "set null" }),
-    executionWorkspacePreference: text("execution_workspace_preference"),
     executionWorkspaceSettings: jsonb("execution_workspace_settings").$type<Record<string, unknown>>(),
-    dependsOnIssueId: uuid("depends_on_issue_id").references((): AnyPgColumn => issues.id),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),

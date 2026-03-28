@@ -1070,6 +1070,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const agentParams: Record<string, unknown> = {
     ...payloadTemplate,
+    paperclip: paperclipPayload,
     message,
     sessionKey,
     idempotencyKey: ctx.runId,

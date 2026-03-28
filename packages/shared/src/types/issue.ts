@@ -1,8 +1,7 @@
 import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
-import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
-import type { IssueWorkProduct } from "./work-product.js";
+import type { IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
 
 export interface IssueAncestorProject {
   id: string;
@@ -122,8 +121,6 @@ export interface Issue {
   requestDepth: number;
   billingCode: string | null;
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;
-  executionWorkspaceId: string | null;
-  executionWorkspacePreference: string | null;
   executionWorkspaceSettings: IssueExecutionWorkspaceSettings | null;
   startedAt: Date | null;
   completedAt: Date | null;

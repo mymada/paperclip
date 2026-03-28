@@ -1,7 +1,5 @@
-import { createGzip } from "node:zlib";
-import { pipeline } from "node:stream/promises";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
-import { cp, readFile, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import postgres from "postgres";
 
@@ -14,57 +12,12 @@ export type RunDatabaseBackupOptions = {
   includeMigrationJournal?: boolean;
   excludeTables?: string[];
   nullifyColumns?: Record<string, string[]>;
-  compression?: boolean;
 };
 
 export type RunDatabaseBackupResult = {
   backupFile: string;
   sizeBytes: number;
   prunedCount: number;
-};
-
-export type GfsOptions = {
-  enabled: boolean;
-  hourlyCount: number;
-  dailyCount: number;
-  weeklyCount: number;
-};
-
-export type BackupIncludeFiles = {
-  skills: boolean;
-  projects: boolean;
-  workspaces: boolean;
-  storage: boolean;
-  secrets: boolean;
-  config: boolean;
-};
-
-export type RunFullBackupOptions = {
-  connectionString: string;
-  backupDir: string;
-  filenamePrefix?: string;
-  connectTimeoutSeconds?: number;
-  compression?: boolean;
-  includeFiles?: Partial<BackupIncludeFiles>;
-  gfs?: GfsOptions;
-  // Paths to instance directories
-  instanceRoot?: string;
-  skillsDir?: string;
-  projectsDir?: string;
-  workspacesDir?: string;
-  storageDir?: string;
-  secretsDir?: string;
-  configFile?: string;
-};
-
-export type RunFullBackupResult = {
-  backupDir: string;
-  dbFile: string;
-  dbSizeBytes: number;
-  filesSizeBytes: number;
-  totalSizeBytes: number;
-  prunedCount: number;
-  includedDirs: string[];
 };
 
 export type RunDatabaseRestoreOptions = {
@@ -699,95 +652,6 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   } finally {
     await sql.end();
   }
-}
-
-export async function runFullBackup(opts: RunFullBackupOptions): Promise<RunFullBackupResult> {
-  const filenamePrefix = opts.filenamePrefix ?? "paperclip";
-  const useCompression = opts.compression !== false;
-  const include: BackupIncludeFiles = {
-    skills: opts.includeFiles?.skills !== false,
-    projects: opts.includeFiles?.projects !== false,
-    workspaces: opts.includeFiles?.workspaces !== false,
-    storage: opts.includeFiles?.storage !== false,
-    secrets: opts.includeFiles?.secrets !== false,
-    config: opts.includeFiles?.config !== false,
-  };
-  const gfs: GfsOptions = opts.gfs ?? { enabled: true, hourlyCount: 24, dailyCount: 7, weeklyCount: 4 };
-
-  const ts = timestamp();
-  const backupEntryName = `${filenamePrefix}-full-${ts}`;
-  const backupEntryPath = resolve(opts.backupDir, backupEntryName);
-
-  mkdirSync(backupEntryPath, { recursive: true });
-
-  // 1. DB dump
-  const dbResult = await runDatabaseBackup({
-    connectionString: opts.connectionString,
-    backupDir: backupEntryPath,
-    retentionDays: 9999, // No pruning inside the entry — GFS handles it at the top level
-    filenamePrefix: "db",
-    connectTimeoutSeconds: opts.connectTimeoutSeconds,
-    compression: useCompression,
-  });
-
-  const includedDirs: string[] = ["db"];
-
-  // 2. Copy instance file directories
-  const instanceRoot = opts.instanceRoot ?? "";
-
-  const dirsToInclude: Array<{ key: keyof BackupIncludeFiles; src: string | undefined; dest: string }> = [
-    { key: "skills", src: opts.skillsDir, dest: resolve(backupEntryPath, "skills") },
-    { key: "projects", src: opts.projectsDir, dest: resolve(backupEntryPath, "projects") },
-    { key: "workspaces", src: opts.workspacesDir, dest: resolve(backupEntryPath, "workspaces") },
-    { key: "storage", src: opts.storageDir, dest: resolve(backupEntryPath, "storage") },
-    { key: "secrets", src: opts.secretsDir, dest: resolve(backupEntryPath, "secrets") },
-  ];
-
-  let filesSizeBytes = 0;
-  for (const { key, src, dest } of dirsToInclude) {
-    if (!include[key] || !src) continue;
-    await copyDirIfExists(src, dest);
-    const sz = dirSizeSync(dest);
-    if (sz > 0) {
-      filesSizeBytes += sz;
-      includedDirs.push(key);
-    }
-  }
-
-  // 3. Copy config.json
-  if (include.config && opts.configFile && existsSync(opts.configFile)) {
-    const destConfig = resolve(backupEntryPath, "config.json");
-    await cp(opts.configFile, destConfig);
-    includedDirs.push("config.json");
-  }
-
-  // 4. Write manifest
-  const manifest = {
-    version: 1,
-    createdAt: new Date().toISOString(),
-    instanceRoot,
-    compression: useCompression,
-    included: includedDirs,
-    dbFile: useCompression ? "db.sql.gz" : "db.sql",
-  };
-  await writeFile(resolve(backupEntryPath, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
-
-  const totalSizeBytes = dbResult.sizeBytes + filesSizeBytes;
-
-  // 5. GFS rotation — prune old full backups
-  const prunedCount = gfs.enabled
-    ? pruneFullBackupsGfs(opts.backupDir, filenamePrefix, gfs)
-    : 0;
-
-  return {
-    backupDir: backupEntryPath,
-    dbFile: dbResult.backupFile,
-    dbSizeBytes: dbResult.sizeBytes,
-    filesSizeBytes,
-    totalSizeBytes,
-    prunedCount,
-    includedDirs,
-  };
 }
 
 export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promise<void> {
