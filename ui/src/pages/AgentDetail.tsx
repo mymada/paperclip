@@ -222,10 +222,10 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget";
+type AgentDetailView = "dashboard" | "prompts" | "configuration" | "skills" | "runs" | "budget";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
-  if (value === "instructions" || value === "prompts") return "instructions";
+  if (value === "prompts") return value;
   if (value === "configure" || value === "configuration") return "configuration";
   if (value === "skills") return "skills";
   if (value === "budget") return "budget";
@@ -641,8 +641,8 @@ export function AgentDetail() {
       return;
     }
     const canonicalTab =
-      activeView === "instructions"
-        ? "instructions"
+      activeView === "prompts"
+        ? "prompts"
         : activeView === "configuration"
           ? "configuration"
           : activeView === "skills"
@@ -764,44 +764,7 @@ export function AgentDetail() {
       if (urlRunId) {
         crumbs.push({ label: "Runs", href: `/agents/${canonicalAgentRef}/runs` });
         crumbs.push({ label: `Run ${urlRunId.slice(0, 8)}` });
-      } else if (activeView === "instructions") {
-        crumbs.push({ label: "Instructions" });
-      } else if (activeView === "configuration") {
-        crumbs.push({ label: "Configuration" });
-      // } else if (activeView === "skills") { // TODO: bring back later
-      //   crumbs.push({ label: "Skills" });
-      } else if (activeView === "runs") {
-        crumbs.push({ label: "Runs" });
-      } else if (activeView === "budget") {
-        crumbs.push({ label: "Budget" });
-      } else {
-        crumbs.push({ label: "Dashboard" });
-      }
-    }
-    setBreadcrumbs(crumbs);
-  }, [setBreadcrumbs, agent, routeAgentRef, canonicalAgentRef, activeView, urlRunId]);
-
-  useEffect(() => {
-    closePanel();
-    return () => closePanel();
-  }, [closePanel]);
-
-  useBeforeUnload(
-    useCallback((event) => {
-      if (!configDirty) return;
-      event.preventDefault();
-      event.returnValue = "";
-    }, [configDirty]),
-  );
-
-  if (isLoading) return <PageSkeleton variant="detail" />;
-  if (error) return <p className="text-sm text-destructive">{error.message}</p>;
-  if (!agent) return null;
-  if (!urlRunId && !urlTab) {
-    return <Navigate to={`/agents/${canonicalAgentRef}/dashboard`} replace />;
-  }
-  const isPendingApproval = agent.status === "pending_approval";
-  const showConfigActionBar = (activeView === "configuration" || activeView === "instructions") && (configDirty || configSaving);
+  const showConfigActionBar = (activeView === "configuration" || activeView === "prompts") && (configDirty || configSaving);
 
   return (
     <div className={cn("space-y-6", isMobile && showConfigActionBar && "pb-24")}>
@@ -909,10 +872,9 @@ export function AgentDetail() {
           <PageTabBar
             items={[
               { value: "dashboard", label: "Dashboard" },
-              { value: "instructions", label: "Instructions" },
+              { value: "prompts", label: "Prompts" },
               { value: "skills", label: "Skills" },
               { value: "configuration", label: "Configuration" },
-              { value: "runs", label: "Runs" },
               { value: "budget", label: "Budget" },
             ]}
             value={activeView}
@@ -996,7 +958,7 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "instructions" && (
+      {activeView === "prompts" && (
         <PromptsTab
           agent={agent}
           companyId={resolvedCompanyId ?? undefined}
@@ -1339,7 +1301,6 @@ function AgentConfigurePage({
         updatePermissions={updatePermissions}
         companyId={companyId}
         hidePromptTemplate
-        hideInstructionsFile
       />
       <div>
         <h3 className="text-sm font-medium mb-3">API Keys</h3>
@@ -1411,7 +1372,6 @@ function ConfigurationTab({
   onSavingChange,
   updatePermissions,
   hidePromptTemplate,
-  hideInstructionsFile,
 }: {
   agent: AgentDetailRecord;
   companyId?: string;
@@ -1419,9 +1379,8 @@ function ConfigurationTab({
   onSaveActionChange: (save: (() => void) | null) => void;
   onCancelActionChange: (cancel: (() => void) | null) => void;
   onSavingChange: (saving: boolean) => void;
-  updatePermissions: { mutate: (permissions: AgentPermissionUpdate) => void; isPending: boolean };
+  updatePermissions: { mutate: (canCreate: boolean) => void; isPending: boolean };
   hidePromptTemplate?: boolean;
-  hideInstructionsFile?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
@@ -1498,7 +1457,6 @@ function ConfigurationTab({
         onCancelActionChange={onCancelActionChange}
         hideInlineSave
         hidePromptTemplate={hidePromptTemplate}
-        hideInstructionsFile={hideInstructionsFile}
         sectionLayout="cards"
       />
 
@@ -1594,56 +1552,108 @@ function PromptsTab({
 }) {
   const queryClient = useQueryClient();
   const { selectedCompanyId } = useCompany();
-  const { isMobile } = useSidebar();
-  const [selectedFile, setSelectedFile] = useState<string>("AGENTS.md");
-  const [showFilePanel, setShowFilePanel] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
-  const [bundleDraft, setBundleDraft] = useState<{
-    mode: "managed" | "external";
-    rootPath: string;
-    entryFile: string;
-  } | null>(null);
-  const [newFilePath, setNewFilePath] = useState("");
-  const [showNewFileInput, setShowNewFileInput] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<string[]>([]);
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
-  const [filePanelWidth, setFilePanelWidth] = useState(260);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [awaitingRefresh, setAwaitingRefresh] = useState(false);
-  const lastFileVersionRef = useRef<string | null>(null);
-  const externalBundleRef = useRef<{
-    rootPath: string;
-    entryFile: string;
-    selectedFile: string;
-  } | null>(null);
+  const lastAgentRef = useRef(agent);
 
-  useEffect(() => {
-    setSelectedFile("AGENTS.md");
-    setShowFilePanel(false);
-    setDraft(null);
-    setBundleDraft(null);
-    setNewFilePath("");
-    setShowNewFileInput(false);
-    setPendingFiles([]);
-    setExpandedDirs(new Set());
-    setAwaitingRefresh(false);
-    lastFileVersionRef.current = null;
-    externalBundleRef.current = null;
-  }, [agent.id]);
+  const currentValue = String(agent.adapterConfig?.promptTemplate ?? "");
+  const displayValue = draft ?? currentValue;
+  const isDirty = draft !== null && draft !== currentValue;
 
   const isLocal =
     agent.adapterType === "claude_local" ||
     agent.adapterType === "codex_local" ||
-    agent.adapterType === "gemini_local" ||
     agent.adapterType === "opencode_local" ||
     agent.adapterType === "pi_local" ||
     agent.adapterType === "hermes_local" ||
     agent.adapterType === "cursor";
 
-  const { data: bundle, isLoading: bundleLoading } = useQuery({
-    queryKey: queryKeys.agents.instructionsBundle(agent.id),
-    queryFn: () => agentsApi.instructionsBundle(agent.id, companyId),
-    enabled: Boolean(companyId && isLocal),
+  const updateAgent = useMutation({
+    mutationFn: (data: Record<string, unknown>) => agentsApi.update(agent.id, data, companyId),
+    onMutate: () => setAwaitingRefresh(true),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agents.detail(agent.urlKey) });
+    },
+    onError: () => setAwaitingRefresh(false),
+  });
+
+  const uploadMarkdownImage = useMutation({
+    mutationFn: async ({ file, namespace }: { file: File; namespace: string }) => {
+      if (!selectedCompanyId) throw new Error("Select a company to upload images");
+      return assetsApi.uploadImage(selectedCompanyId, file, namespace);
+    },
+  });
+
+  useEffect(() => {
+    if (awaitingRefresh && agent !== lastAgentRef.current) {
+      setAwaitingRefresh(false);
+      setDraft(null);
+    }
+    lastAgentRef.current = agent;
+  }, [agent, awaitingRefresh]);
+
+  const isSaving = updateAgent.isPending || awaitingRefresh;
+
+  useEffect(() => { onSavingChange(isSaving); }, [onSavingChange, isSaving]);
+  useEffect(() => { onDirtyChange(isDirty); }, [onDirtyChange, isDirty]);
+
+  useEffect(() => {
+    onSaveActionChange(isDirty ? () => {
+      updateAgent.mutate({ adapterConfig: { promptTemplate: draft } });
+    } : null);
+  }, [onSaveActionChange, isDirty, draft, updateAgent]);
+
+  useEffect(() => {
+    onCancelActionChange(isDirty ? () => setDraft(null) : null);
+  }, [onCancelActionChange, isDirty]);
+
+  if (!isLocal) {
+    return (
+      <div className="max-w-3xl">
+        <p className="text-sm text-muted-foreground">
+          Prompt templates are only available for local adapters.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <div>
+        <h3 className="text-sm font-medium mb-3">Prompt Template</h3>
+        <div className="border border-border rounded-lg p-4 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {help.promptTemplate}
+          </p>
+          <MarkdownEditor
+            value={displayValue}
+            onChange={(v) => setDraft(v ?? "")}
+            placeholder="You are agent {{ agent.name }}. Your role is {{ agent.role }}..."
+            contentClassName="min-h-[88px] text-sm font-mono"
+            imageUploadHandler={async (file) => {
+              const namespace = `agents/${agent.id}/prompt-template`;
+              const asset = await uploadMarkdownImage.mutateAsync({ file, namespace });
+              return asset.contentPath;
+            }}
+          />
+          <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Prompt template is replayed on every heartbeat. Keep it compact and dynamic to avoid recurring token cost and cache churn.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkillsTab({ agent }: { agent: Agent }) {
+  const instructionsPath =
+    typeof agent.adapterConfig?.instructionsFilePath === "string" && agent.adapterConfig.instructionsFilePath.trim().length > 0
+      ? agent.adapterConfig.instructionsFilePath
+      : null;
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.skills.available,
+    queryFn: () => agentsApi.availableSkills(),
   });
 
   const persistedMode = bundle?.mode ?? "managed";

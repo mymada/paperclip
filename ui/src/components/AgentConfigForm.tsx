@@ -65,10 +65,6 @@ type AgentConfigFormProps = {
   onSaveActionChange?: (save: (() => void) | null) => void;
   onCancelActionChange?: (cancel: (() => void) | null) => void;
   hideInlineSave?: boolean;
-  showAdapterTypeField?: boolean;
-  showAdapterTestEnvironmentButton?: boolean;
-  showCreateRunPolicySection?: boolean;
-  hideInstructionsFile?: boolean;
   /** Hide the prompt template field from the Identity section (used when it's shown in a separate Prompts tab). */
   hidePromptTemplate?: boolean;
   /** "cards" renders each section as heading + bordered card (for settings pages). Default: "inline" (border-b dividers). */
