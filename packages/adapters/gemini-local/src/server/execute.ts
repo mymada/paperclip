@@ -15,14 +15,12 @@ import {
   ensurePaperclipSkillSymlink,
   joinPromptSections,
   ensurePathInEnv,
-  readPaperclipRuntimeSkillEntries,
-  resolvePaperclipDesiredSkillNames,
+  listPaperclipSkillEntries,
   removeMaintainerOnlySkillSymlinks,
   parseObject,
   redactEnvForLogs,
   renderTemplate,
   runChildProcess,
-  applyBillingModeOverride,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import {
@@ -41,11 +39,10 @@ function hasNonEmptyEnvValue(env: Record<string, string>, key: string): boolean 
   return typeof raw === "string" && raw.trim().length > 0;
 }
 
-function resolveGeminiBillingType(env: Record<string, string>, billingMode: string): "api" | "subscription" {
-  const autoDetected = hasNonEmptyEnvValue(env, "GEMINI_API_KEY") || hasNonEmptyEnvValue(env, "GOOGLE_API_KEY")
+function resolveGeminiBillingType(env: Record<string, string>): "api" | "subscription" {
+  return hasNonEmptyEnvValue(env, "GEMINI_API_KEY") || hasNonEmptyEnvValue(env, "GOOGLE_API_KEY")
     ? "api"
     : "subscription";
-  return applyBillingModeOverride(autoDetected, billingMode);
 }
 
 function renderPaperclipEnvNote(env: Record<string, string>): string {
@@ -87,12 +84,9 @@ function geminiSkillsHome(): string {
  */
 async function ensureGeminiSkillsInjected(
   onLog: AdapterExecutionContext["onLog"],
-  skillsEntries: Array<{ key: string; runtimeName: string; source: string }>,
-  desiredSkillNames?: string[],
 ): Promise<void> {
-  const desiredSet = new Set(desiredSkillNames ?? skillsEntries.map((entry) => entry.key));
-  const selectedEntries = skillsEntries.filter((entry) => desiredSet.has(entry.key));
-  if (selectedEntries.length === 0) return;
+  const skillsEntries = await listPaperclipSkillEntries(__moduleDir);
+  if (skillsEntries.length === 0) return;
 
   const skillsHome = geminiSkillsHome();
   try {
@@ -106,7 +100,7 @@ async function ensureGeminiSkillsInjected(
   }
   const removedSkills = await removeMaintainerOnlySkillSymlinks(
     skillsHome,
-    selectedEntries.map((entry) => entry.runtimeName),
+    skillsEntries.map((entry) => entry.name),
   );
   for (const skillName of removedSkills) {
     await onLog(
@@ -115,27 +109,27 @@ async function ensureGeminiSkillsInjected(
     );
   }
 
-  for (const entry of selectedEntries) {
-    const target = path.join(skillsHome, entry.runtimeName);
+  for (const entry of skillsEntries) {
+    const target = path.join(skillsHome, entry.name);
 
     try {
       const result = await ensurePaperclipSkillSymlink(entry.source, target);
       if (result === "skipped") continue;
       await onLog(
         "stderr",
-        `[paperclip] ${result === "repaired" ? "Repaired" : "Linked"} Gemini skill: ${entry.key}\n`,
+        `[paperclip] ${result === "repaired" ? "Repaired" : "Linked"} Gemini skill: ${entry.name}\n`,
       );
     } catch (err) {
       await onLog(
         "stderr",
-        `[paperclip] Failed to link Gemini skill "${entry.key}": ${err instanceof Error ? err.message : String(err)}\n`,
+        `[paperclip] Failed to link Gemini skill "${entry.name}": ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
   }
 }
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
+  const { runId, agent, runtime, config, context, onLog, onMeta, authToken } = ctx;
 
   const promptTemplate = asString(
     config.promptTemplate,
@@ -162,9 +156,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const effectiveWorkspaceCwd = useConfiguredInsteadOfAgentHome ? "" : workspaceCwd;
   const cwd = effectiveWorkspaceCwd || configuredCwd || process.cwd();
   await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
-  const geminiSkillEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredGeminiSkillNames = resolvePaperclipDesiredSkillNames(config, geminiSkillEntries);
-  await ensureGeminiSkillsInjected(onLog, geminiSkillEntries, desiredGeminiSkillNames);
+  await ensureGeminiSkillsInjected(onLog);
 
   const envConfig = parseObject(config.env);
   const hasExplicitApiKey =
@@ -214,13 +206,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (!hasExplicitApiKey && authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
-
   const effectiveEnv = Object.fromEntries(
     Object.entries({ ...process.env, ...env }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  const billingType = resolveGeminiBillingType(effectiveEnv, asString(config.billingMode, "auto"));
+  const billingType = resolveGeminiBillingType(effectiveEnv);
   const runtimeEnv = ensurePathInEnv(effectiveEnv);
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
@@ -228,10 +219,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const graceSec = asNumber(config.graceSec, 20);
   const extraArgs = (() => {
     const fromExtraArgs = asStringArray(config.extraArgs);
-    const rawArgs = fromExtraArgs.length > 0 ? fromExtraArgs : asStringArray(config.args);
-    // Filter out empty or whitespace-only arguments which can confuse the Gemini CLI parser
-    // and cause "Cannot use both a positional prompt and the --prompt (-p) flag together"
-    return rawArgs.map(a => a.trim()).filter(Boolean);
+    if (fromExtraArgs.length > 0) return fromExtraArgs;
+    return asStringArray(config.args);
   })();
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
@@ -243,16 +232,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionId = canResumeSession ? runtimeSessionId : null;
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
-      "stdout",
+      "stderr",
       `[paperclip] Gemini session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
     );
   }
 
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
-  const instructionsBundleMode = asString(config.instructionsBundleMode, "unmanaged").trim();
-  const instructionsRootPath = asString(config.instructionsRootPath, "").trim();
   const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
-  
   let instructionsPrefix = "";
   if (instructionsFilePath) {
     try {
@@ -261,13 +247,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `${instructionsContents}\n\n` +
         `The above agent instructions were loaded from ${instructionsFilePath}. ` +
         `Resolve any relative file references from ${instructionsDir}.\n\n`;
+      await onLog(
+        "stderr",
+        `[paperclip] Loaded agent instructions file: ${instructionsFilePath}\n`,
+      );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await onLog("stdout", `[paperclip] Warning: could not read agent instructions for Gemini: ${reason}\n`);
+      await onLog(
+        "stderr",
+        `[paperclip] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
+      );
     }
   }
   const commandNotes = (() => {
-    const notes: string[] = ["Prompt is passed to Gemini via --prompt for non-interactive execution."];
+    const notes: string[] = ["Prompt is passed to Gemini as the final positional argument."];
     notes.push("Added --approval-mode yolo for unattended execution.");
     if (!instructionsFilePath) return notes;
     if (instructionsPrefix.length > 0) {
@@ -308,7 +301,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     paperclipEnvNote,
     apiAccessNote,
     renderedPrompt,
-  ]).trim() || "Hello"; // Fallback to a non-empty string to avoid "Not enough arguments following: prompt"
+  ]);
   const promptMetrics = {
     promptChars: prompt.length,
     instructionsChars: instructionsPrefix.length,
@@ -329,7 +322,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push("--sandbox=none");
     }
     if (extraArgs.length > 0) args.push(...extraArgs);
-    // Removed --prompt flag, we will pass it via STDIN
+    args.push(prompt);
     return args;
   };
 
@@ -340,8 +333,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         adapterType: "gemini_local",
         command,
         cwd,
-        commandNotes: [...commandNotes, "Prompt is passed via STDIN for robustness."],
-        commandArgs: args,
+        commandNotes,
+        commandArgs: args.map((value, index) => (
+          index === args.length - 1 ? `<prompt ${prompt.length} chars>` : value
+        )),
         env: redactEnvForLogs(env),
         prompt,
         promptMetrics,
@@ -354,11 +349,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       env,
       timeoutSec,
       graceSec,
-      onSpawn,
       onLog,
-      stdin: prompt, // Pass the prompt here
     });
-    
     return {
       proc,
       parsed: parseGeminiJsonl(proc.stdout),
@@ -455,7 +447,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     isGeminiUnknownSessionError(initial.proc.stdout, initial.proc.stderr)
   ) {
     await onLog(
-      "stdout",
+      "stderr",
       `[paperclip] Gemini resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
     );
     const retry = await runAttempt(null);

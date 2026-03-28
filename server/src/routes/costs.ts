@@ -14,7 +14,6 @@ import {
   financeService,
   companyService,
   agentService,
-  heartbeatService,
   logActivity,
 } from "../services/index.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -23,13 +22,9 @@ import { badRequest } from "../errors.js";
 
 export function costRoutes(db: Db) {
   const router = Router();
-  const heartbeat = heartbeatService(db);
-  const budgetHooks = {
-    cancelWorkForScope: heartbeat.cancelBudgetScopeWork,
-  };
-  const costs = costService(db, budgetHooks);
+  const costs = costService(db);
   const finance = financeService(db);
-  const budgets = budgetService(db, budgetHooks);
+  const budgets = budgetService(db);
   const companies = companyService(db);
   const agents = agentService(db);
 
@@ -103,9 +98,9 @@ export function costRoutes(db: Db) {
   }
 
   function parseLimit(query: Record<string, unknown>) {
-    const raw = Array.isArray(query.limit) ? query.limit[0] : query.limit;
-    if (raw == null || raw === "") return 100;
-    const limit = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+    const raw = query.limit as string | undefined;
+    if (!raw) return 100;
+    const limit = Number.parseInt(raw, 10);
     if (!Number.isFinite(limit) || limit <= 0 || limit > 500) {
       throw badRequest("invalid 'limit' value");
     }
@@ -250,7 +245,6 @@ export function costRoutes(db: Db) {
   router.patch("/companies/:companyId/budgets", validate(updateBudgetSchema), async (req, res) => {
     assertBoard(req);
     const companyId = req.params.companyId as string;
-    assertCompanyAccess(req, companyId);
     const company = await companies.update(companyId, { budgetMonthlyCents: req.body.budgetMonthlyCents });
     if (!company) {
       res.status(404).json({ error: "Company not found" });
@@ -288,8 +282,6 @@ export function costRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-
-    assertCompanyAccess(req, agent.companyId);
 
     if (req.actor.type === "agent") {
       if (req.actor.agentId !== agentId) {

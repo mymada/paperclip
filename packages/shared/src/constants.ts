@@ -16,7 +16,6 @@ export const AGENT_STATUSES = [
   "idle",
   "running",
   "error",
-  "rate_limited",
   "pending_approval",
   "terminated",
 ] as const;
@@ -27,12 +26,10 @@ export const AGENT_ADAPTER_TYPES = [
   "http",
   "claude_local",
   "codex_local",
-  "gemini_local",
   "opencode_local",
   "pi_local",
   "cursor",
   "openclaw_gateway",
-  "hermes_local",
 ] as const;
 export type AgentAdapterType = (typeof AGENT_ADAPTER_TYPES)[number];
 
@@ -124,9 +121,6 @@ export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
-export const ISSUE_ORIGIN_KINDS = ["manual", "routine_execution"] as const;
-export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
-
 export const GOAL_LEVELS = ["company", "team", "agent", "task"] as const;
 export type GoalLevel = (typeof GOAL_LEVELS)[number];
 
@@ -141,34 +135,6 @@ export const PROJECT_STATUSES = [
   "cancelled",
 ] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
-
-export const ROUTINE_STATUSES = ["active", "paused", "archived"] as const;
-export type RoutineStatus = (typeof ROUTINE_STATUSES)[number];
-
-export const ROUTINE_CONCURRENCY_POLICIES = ["coalesce_if_active", "always_enqueue", "skip_if_active"] as const;
-export type RoutineConcurrencyPolicy = (typeof ROUTINE_CONCURRENCY_POLICIES)[number];
-
-export const ROUTINE_CATCH_UP_POLICIES = ["skip_missed", "enqueue_missed_with_cap"] as const;
-export type RoutineCatchUpPolicy = (typeof ROUTINE_CATCH_UP_POLICIES)[number];
-
-export const ROUTINE_TRIGGER_KINDS = ["schedule", "webhook", "api"] as const;
-export type RoutineTriggerKind = (typeof ROUTINE_TRIGGER_KINDS)[number];
-
-export const ROUTINE_TRIGGER_SIGNING_MODES = ["bearer", "hmac_sha256"] as const;
-export type RoutineTriggerSigningMode = (typeof ROUTINE_TRIGGER_SIGNING_MODES)[number];
-
-export const ROUTINE_RUN_STATUSES = [
-  "received",
-  "coalesced",
-  "skipped",
-  "issue_created",
-  "completed",
-  "failed",
- ] as const;
-export type RoutineRunStatus = (typeof ROUTINE_RUN_STATUSES)[number];
-
-export const ROUTINE_RUN_SOURCES = ["schedule", "manual", "api", "webhook"] as const;
-export type RoutineRunSource = (typeof ROUTINE_RUN_SOURCES)[number];
 
 export const PAUSE_REASONS = ["manual", "budget", "system"] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
@@ -418,7 +384,6 @@ export const PLUGIN_CAPABILITIES = [
   "project.workspaces.read",
   "issues.read",
   "issue.comments.read",
-  "issue.documents.read",
   "agents.read",
   "goals.read",
   "goals.create",
@@ -429,7 +394,6 @@ export const PLUGIN_CAPABILITIES = [
   "issues.create",
   "issues.update",
   "issue.comments.create",
-  "issue.documents.write",
   "agents.pause",
   "agents.resume",
   "agents.invoke",

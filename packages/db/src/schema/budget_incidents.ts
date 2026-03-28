@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { index, integer, pgTable, text, timestamp, uuid, uniqueIndex } from "drizzle-orm/pg-core";
 import { approvals } from "./approvals.js";
 import { budgetPolicies } from "./budget_policies.js";
@@ -37,6 +36,6 @@ export const budgetIncidents = pgTable(
       table.policyId,
       table.windowStart,
       table.thresholdType,
-    ).where(sql`${table.status} <> 'dismissed'`),
+    ),
   }),
 );
