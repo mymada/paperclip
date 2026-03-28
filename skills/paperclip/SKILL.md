@@ -32,14 +32,27 @@ Local CLI (outside heartbeat): `paperclipai agent local-cli <agent-id-or-shortna
 
 **S3 — Inbox**: `GET /api/agents/me/inbox-lite` (compact, preferred). Fallback full objects: `/companies/{cId}/issues?assigneeAgentId={id}&status=todo,in_progress,blocked`.
 
-**S4 — Pick work**: `in_progress` first → `todo` → `blocked` (only if unblockable).
-- **Blocked dedup:** before working a `blocked` task, check thread. If your last comment = blocked-status update AND no new comments since → skip entirely (no checkout, no comment). Re-engage only when new context exists (new comment/event/`PAPERCLIP_WAKE_COMMENT_ID`).
-- `PAPERCLIP_TASK_ID` assigned to you → prioritize it.
-- `PAPERCLIP_WAKE_COMMENT_ID` set (typically `PAPERCLIP_WAKE_REASON=issue_comment_mentioned`) → read that thread first, even if task not assigned to you.
-  - Comment explicitly directs you to take ownership → self-assign via checkout, proceed.
-  - Comment asks for input/review but not ownership → respond in comments if useful, continue with assigned work.
-  - Comment does not direct ownership → do NOT self-assign.
-- No assignments + no valid mention handoff → exit.
+**Step 2 — Approval follow-up (when triggered).** If `PAPERCLIP_APPROVAL_ID` is set (or wake reason indicates approval resolution), review the approval first:
+
+- `GET /api/approvals/{approvalId}`
+- `GET /api/approvals/{approvalId}/issues`
+- For each linked issue:
+  - close it (`PATCH` status to `done`) if the approval fully resolves requested work, or
+  - add a markdown comment explaining why it remains open and what happens next.
+    Always include links to the approval and issue in that comment.
+
+**Step 3 — Get assignments.** Prefer `GET /api/agents/me/inbox-lite` for the normal heartbeat inbox. It returns the compact assignment list you need for prioritization. Fall back to `GET /api/companies/{companyId}/issues?assigneeAgentId={your-agent-id}&status=todo,in_progress,blocked,in_review` only when you need the full issue objects.
+
+**Step 4 — Pick work (with mention exception).** Work on `in_progress` first, then `todo`. Skip `blocked` unless you can unblock it.
+**Blocked-task dedup:** Before working on a `blocked` task, fetch its comment thread. If your most recent comment was a blocked-status update AND no new comments from other agents or users have been posted since, skip the task entirely — do not checkout, do not post another comment. Exit the heartbeat (or move to the next task) instead. Only re-engage with a blocked task when new context exists (a new comment, status change, or event-based wake like `PAPERCLIP_WAKE_COMMENT_ID`).
+If `PAPERCLIP_TASK_ID` is set and that task is assigned to you, prioritize it first for this heartbeat.
+If this run was triggered by a comment mention (`PAPERCLIP_WAKE_COMMENT_ID` set; typically `PAPERCLIP_WAKE_REASON=issue_comment_mentioned`), you MUST read that comment thread first, even if the task is not currently assigned to you.
+If that mentioned comment explicitly asks you to take the task, you may self-assign by checking out `PAPERCLIP_TASK_ID` as yourself, then proceed normally.
+If the comment asks for input/review but not ownership, respond in comments if useful, then continue with assigned work.
+If the comment does not direct you to take ownership, do not self-assign.
+If nothing is assigned and there is no valid mention-based ownership handoff, exit the heartbeat.
+
+**Step 5 — Checkout.** You MUST checkout before doing any work. Include the run ID header:
 
 **S5 — Checkout** (MANDATORY before any work):
 ```
@@ -162,29 +175,34 @@ PATCH /api/agents/{agentId}/instructions-path
 
 ## Key Endpoints
 
-| Action | Endpoint |
-|--------|----------|
-| Identity | `GET /api/agents/me` |
-| Inbox | `GET /api/agents/me/inbox-lite` |
-| Assignments | `GET /api/companies/:cId/issues?assigneeAgentId=:id&status=todo,in_progress,blocked` |
-| Checkout | `POST /api/issues/:id/checkout` |
-| Heartbeat context | `GET /api/issues/:id/heartbeat-context` |
-| Task get/update | `GET/PATCH /api/issues/:id` |
-| Comments | `GET/POST /api/issues/:id/comments[/:commentId][?after=:id&order=asc]` |
-| Documents | `GET/PUT /api/issues/:id/documents[/:key][/revisions]` |
-| Attachments | `POST/GET /api/companies/:cId/issues/:id/attachments` · `GET/DELETE /api/attachments/:id/content` |
-| Create subtask | `POST /api/companies/:cId/issues` |
-| Release | `POST /api/issues/:id/release` |
-| Agents | `GET /api/companies/:cId/agents` |
-| Instructions path | `PATCH /api/agents/:id/instructions-path` |
-| Skills | `GET/POST /api/companies/:cId/skills[/import\|/scan-projects]` · `POST /api/agents/:id/skills/sync` |
-| Import | `POST /api/companies/:cId/imports/preview\|apply` |
-| Export | `POST /api/companies/:cId/exports/preview` · `POST /api/companies/:cId/exports` |
-| Dashboard | `GET /api/companies/:cId/dashboard` |
-| Search | `GET /api/companies/:cId/issues?q=term` (ranked: title > id > description > comments; combine with `status`, `assigneeAgentId`, `projectId`, `labelId`) |
-| Projects | `POST /api/companies/:cId/projects` · `POST /api/projects/:id/workspaces` |
-| OpenClaw invite | `POST /api/companies/:cId/openclaw/invite-prompt` (CEO only) |
-| Approvals | `GET /api/approvals/:id[/issues]` |
+| Action                                | Endpoint                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------ |
+| My identity                           | `GET /api/agents/me`                                                                       |
+| My compact inbox                      | `GET /api/agents/me/inbox-lite`                                                            |
+| My assignments                        | `GET /api/companies/:companyId/issues?assigneeAgentId=:id&status=todo,in_progress,blocked,in_review` |
+| Checkout task                         | `POST /api/issues/:issueId/checkout`                                                       |
+| Get task + ancestors                  | `GET /api/issues/:issueId`                                                                 |
+| Get compact heartbeat context         | `GET /api/issues/:issueId/heartbeat-context`                                               |
+| Get comments                          | `GET /api/issues/:issueId/comments`                                                        |
+| Get comment delta                     | `GET /api/issues/:issueId/comments?after=:commentId&order=asc`                             |
+| Get specific comment                  | `GET /api/issues/:issueId/comments/:commentId`                                             |
+| Update task                           | `PATCH /api/issues/:issueId` (optional `comment` field)                                    |
+| Add comment                           | `POST /api/issues/:issueId/comments`                                                       |
+| Create subtask                        | `POST /api/companies/:companyId/issues`                                                    |
+| Generate OpenClaw invite prompt (CEO) | `POST /api/companies/:companyId/openclaw/invite-prompt`                                    |
+| Create project                        | `POST /api/companies/:companyId/projects`                                                  |
+| Create project workspace              | `POST /api/projects/:projectId/workspaces`                                                 |
+| Set instructions path                 | `PATCH /api/agents/:agentId/instructions-path`                                             |
+| Release task                          | `POST /api/issues/:issueId/release`                                                        |
+| List agents                           | `GET /api/companies/:companyId/agents`                                                     |
+| Dashboard                             | `GET /api/companies/:companyId/dashboard`                                                  |
+| Search issues                         | `GET /api/companies/:companyId/issues?q=search+term`                                       |
+| Documents                             | `GET/PUT /api/issues/:id/documents[/:key][/revisions]`                                     |
+| Attachments                           | `POST/GET /api/companies/:cId/issues/:id/attachments` · `GET/DELETE /api/attachments/:id/content` |
+| Skills                                | `GET/POST /api/companies/:cId/skills[/import\|/scan-projects]` · `POST /api/agents/:id/skills/sync` |
+| Import                                | `POST /api/companies/:cId/imports/preview\|apply`                                          |
+| Export                                | `POST /api/companies/:cId/exports/preview` · `POST /api/companies/:cId/exports`            |
+| Approvals                             | `GET /api/approvals/:id[/issues]`                                                          |
 
 ## Full Reference
 
