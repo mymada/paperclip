@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "re
 import { Link, useLocation } from "react-router-dom";
 import type { IssueComment, Agent } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, Paperclip } from "lucide-react";
+import { Check, Copy, Paperclip, Pencil, X } from "lucide-react";
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { MarkdownBody } from "./MarkdownBody";
@@ -36,6 +36,7 @@ interface CommentThreadProps {
   companyId?: string | null;
   projectId?: string | null;
   onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
+  onEdit?: (commentId: string, body: string) => Promise<void>;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -124,13 +125,16 @@ const TimelineList = memo(function TimelineList({
   companyId,
   projectId,
   highlightCommentId,
+  onEdit,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
   companyId?: string | null;
   projectId?: string | null;
   highlightCommentId?: string | null;
+  onEdit?: (commentId: string, body: string) => Promise<void>;
 }) {
+  const [editState, setEditState] = useState<{ id: string; body: string; saving: boolean } | null>(null);
   if (timeline.length === 0) {
     return <p className="text-sm text-muted-foreground">No comments or runs yet.</p>;
   }
@@ -169,6 +173,8 @@ const TimelineList = memo(function TimelineList({
 
         const comment = item.comment;
         const isHighlighted = highlightCommentId === comment.id;
+        const isUserComment = !comment.authorAgentId;
+        const isEditing = editState?.id === comment.id;
         return (
           <div
             key={comment.id}
@@ -209,28 +215,60 @@ const TimelineList = memo(function TimelineList({
                 >
                   {formatDateTime(comment.createdAt)}
                 </a>
+                {isUserComment && onEdit && !isEditing && (
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                    title="Edit comment"
+                    onClick={() => {
+                      setEditState({ id: comment.id, body: comment.body, saving: false });
+                    }}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                )}
                 <CopyMarkdownButton text={comment.body} />
               </span>
             </div>
-            <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
-            {companyId ? (
-              <div className="mt-2 space-y-2">
-                <PluginSlotOutlet
-                  slotTypes={["commentAnnotation"]}
-                  entityType="comment"
-                  context={{
-                    companyId,
-                    projectId: projectId ?? null,
-                    entityId: comment.id,
-                    entityType: "comment",
-                    parentEntityId: comment.issueId,
-                  }}
-                  className="space-y-2"
-                  itemClassName="rounded-md"
-                  missingBehavior="placeholder"
+            {isEditing ? (
+              <div className="space-y-2">
+                <textarea
+                  className="w-full min-h-[60px] rounded-sm border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+                  value={editState?.body ?? ""}
+                  onChange={(e) => setEditState((s) => s ? { ...s, body: e.target.value } : s)}
+                  disabled={editState?.saving}
                 />
+                <div className="flex items-center gap-2 justify-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={editState?.saving}
+                    onClick={() => setEditState(null)}
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={editState?.saving || !editState?.body.trim()}
+                    onClick={async () => {
+                      if (!onEdit || !editState?.body.trim()) return;
+                      setEditState((s) => s ? { ...s, saving: true } : s);
+                      try {
+                        await onEdit(comment.id, editState.body.trim());
+                        setEditState(null);
+                      } finally {
+                        setEditState((s) => s ? { ...s, saving: false } : s);
+                      }
+                    }}
+                  >
+                    {editState?.saving ? "Saving..." : "Save"}
+                  </Button>
+                </div>
               </div>
-            ) : null}
+            ) : (
+              <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+            )}
             {comment.runId && (
               <div className="mt-2 pt-2 border-t border-border/60">
                 {comment.runAgentId ? (
@@ -260,6 +298,8 @@ export function CommentThread({
   companyId,
   projectId,
   onAdd,
+  onEdit,
+  issueStatus,
   agentMap,
   imageUploadHandler,
   onAttachImage,
@@ -409,6 +449,7 @@ export function CommentThread({
         companyId={companyId}
         projectId={projectId}
         highlightCommentId={highlightCommentId}
+        onEdit={onEdit}
       />
 
       {liveRunSlot}
