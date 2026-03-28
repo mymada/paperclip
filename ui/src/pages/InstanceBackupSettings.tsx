@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, CheckCircle2, Clock, Database, Download, FolderOpen, HardDrive, Play, RefreshCw, RotateCcw, XCircle } from "lucide-react";
+import { Archive, CheckCircle2, Clock, Database, Download, FolderOpen, HardDrive, Play, RefreshCw, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { backupApi, type BackupEntry } from "@/api/backup";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
-function BackupRow({ entry, onRestore }: { entry: BackupEntry; onRestore: (name: string) => void }) {
+function BackupRow({ entry, onRestore, onDelete }: { entry: BackupEntry; onRestore: (name: string) => void; onDelete: (name: string) => void }) {
   const date = new Date(entry.createdAt);
   return (
     <div className="flex items-center gap-3 px-3 py-2 text-sm">
@@ -62,6 +62,15 @@ function BackupRow({ entry, onRestore }: { entry: BackupEntry; onRestore: (name:
           <RotateCcw className="h-3 w-3" />
           <span className="hidden sm:inline">Restore</span>
         </button>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+          title="Delete this backup"
+          onClick={() => onDelete(entry.name)}
+        >
+          <Trash2 className="h-3 w-3" />
+          <span className="hidden sm:inline">Delete</span>
+        </button>
       </div>
     </div>
   );
@@ -73,6 +82,7 @@ export function InstanceBackupSettings() {
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
   const [restoreMessage, setRestoreMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -100,6 +110,19 @@ export function InstanceBackupSettings() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (name: string) => backupApi.delete(name),
+    onSuccess: () => {
+      setConfirmDelete(null);
+      void queryClient.invalidateQueries({ queryKey: ["backup"] });
+    },
+    onError: (err) => {
+      setRestoreMessage({ text: err instanceof Error ? err.message : "Delete failed.", isError: true });
+      setConfirmDelete(null);
+      setTimeout(() => setRestoreMessage(null), 10000);
+    },
+  });
+
   const restoreMutation = useMutation({
     mutationFn: (name: string) => backupApi.restore(name),
     onSuccess: (data) => {
@@ -122,6 +145,10 @@ export function InstanceBackupSettings() {
 
   function handleRestoreClick(name: string) {
     setConfirmRestore(name);
+  }
+
+  function handleDeleteClick(name: string) {
+    setConfirmDelete(name);
   }
 
   return (
@@ -264,6 +291,38 @@ export function InstanceBackupSettings() {
             </CardContent>
           </Card>
 
+          {/* Delete confirmation dialog */}
+          {confirmDelete && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 space-y-3">
+              <p className="text-sm font-semibold text-destructive">Confirm backup deletion</p>
+              <p className="text-xs text-muted-foreground">
+                This will permanently delete{" "}
+                <span className="font-mono font-semibold">{confirmDelete}</span>.{" "}
+                This action cannot be undone.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 text-xs"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate(confirmDelete)}
+                >
+                  {deleteMutation.isPending ? <><RefreshCw className="h-3 w-3 animate-spin mr-1" /> Deleting…</> : "Yes, delete"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => setConfirmDelete(null)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Restore confirmation dialog */}
           {confirmRestore && (
             <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 space-y-3">
@@ -338,7 +397,7 @@ export function InstanceBackupSettings() {
               <Card>
                 <CardContent className="p-0 divide-y">
                   {backups.map((entry) => (
-                    <BackupRow key={entry.name} entry={entry} onRestore={handleRestoreClick} />
+                    <BackupRow key={entry.name} entry={entry} onRestore={handleRestoreClick} onDelete={handleDeleteClick} />
                   ))}
                 </CardContent>
               </Card>

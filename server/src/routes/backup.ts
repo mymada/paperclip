@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { cp, readFile, unlink } from "node:fs/promises";
+import { cp, readFile, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGunzip } from "node:zlib";
@@ -295,6 +295,52 @@ export function backupRoutes(opts: {
       restored,
       skipped: skipped.length > 0 ? skipped : undefined,
     });
+  });
+
+  // DELETE /api/backup/:name — supprime un backup (dossier + archive .tar.gz si présente)
+  router.delete("/:name", async (req, res) => {
+    const { name } = req.params;
+
+    if (!/^[a-zA-Z0-9_.-]+$/.test(name)) {
+      res.status(400).json({ error: "Invalid backup name" });
+      return;
+    }
+
+    const backups = listFullBackups(opts.backupDir);
+    const entry = backups.find((b) => b.name === name);
+
+    if (!entry) {
+      res.status(404).json({ error: "Backup not found" });
+      return;
+    }
+
+    const errors: string[] = [];
+
+    // Supprime le dossier du backup
+    if (existsSync(entry.path)) {
+      try {
+        await rm(entry.path, { recursive: true, force: true });
+      } catch (err) {
+        errors.push(`Failed to delete directory: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Supprime l'archive .tar.gz si elle existe à côté du dossier
+    const archivePath = join(opts.backupDir, `${name}.tar.gz`);
+    if (existsSync(archivePath)) {
+      try {
+        await unlink(archivePath);
+      } catch (err) {
+        errors.push(`Failed to delete archive: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      res.status(500).json({ error: errors.join("; ") });
+      return;
+    }
+
+    res.json({ message: `Backup "${name}" deleted successfully.` });
   });
 
   return router;
