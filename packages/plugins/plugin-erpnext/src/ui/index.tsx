@@ -4,9 +4,11 @@
  * Pattern: register data handlers in worker.ts with ctx.data.register(),
  * consume them here with usePluginData(key, params).
  */
+import { type CSSProperties, useState } from "react";
 import {
   usePluginData,
   usePluginAction,
+  type PluginCommentAnnotationProps,
   type PluginDetailTabProps,
   type PluginPageProps,
   type PluginSidebarProps,
@@ -94,11 +96,23 @@ function LastSync({ at }: { at?: string }) {
 }
 
 function SyncButton() {
-  const { perform, loading } = usePluginAction(ACTION_KEYS.syncNow);
+  const [loading, setLoading] = useState(false);
+  const triggerSync = usePluginAction(ACTION_KEYS.syncNow);
+
+  const handleSync = async () => {
+    setLoading(true);
+    try {
+      await triggerSync({});
+    } catch (err) {
+      console.error("Sync failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <button
-      onClick={() => perform({})}
+      onClick={handleSync}
       disabled={loading}
       className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 disabled:opacity-50 transition-colors"
     >
@@ -371,4 +385,21 @@ export function ERPNextProjectTab({ context }: PluginDetailTabProps) {
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Comment Annotation — detect ERP IDs and show status
+// ---------------------------------------------------------------------------
+
+export function ERPNextCommentAnnotation({ context }: PluginCommentAnnotationProps) {
+  // We use entityId which is the comment ID.
+  // Note: The SDK currently doesn't provide commentBody in props for v1.
+  // A future version might, but for now we'll assume it needs to be fetched
+  // or that this slot only renders if metadata is attached.
+  // For this integration, we'll try to fetch the comment details via usePluginData
+  // if we want to parse it, OR we rely on the host passing custom data.
+  
+  // Placeholder logic for demonstration: 
+  // In a real native integration, the host should pass the mention context.
+  return null; 
 }

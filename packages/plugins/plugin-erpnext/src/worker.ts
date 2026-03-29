@@ -80,6 +80,39 @@ function assertDoctypeAllowed(config: ErpPluginConfig, doctype: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Sync Logic (Shared between Job and Action)
+// ---------------------------------------------------------------------------
+
+async function performFullSync(ctx: PluginContext, trigger: string = "manual"): Promise<void> {
+  ctx.logger.info(`ERPNext full sync started (trigger: ${trigger})`);
+  try {
+    const { client, config } = await resolveErpConfig(ctx);
+    if (!config.syncEnabled && trigger !== "manual") {
+      ctx.logger.info("ERPNext sync disabled in config, skipping");
+      return;
+    }
+
+    const stats: Record<string, unknown> = {};
+    await Promise.allSettled([
+      client.getAccountingStats(ctx).then((s) => { stats.accounting = s; }),
+      client.getSellingStats(ctx).then((s) => { stats.selling = s; }),
+      client.getBuyingStats(ctx).then((s) => { stats.buying = s; }),
+      client.getStockStats(ctx).then((s) => { stats.stock = s; }),
+      client.getHrStats(ctx).then((s) => { stats.hr = s; }),
+    ]);
+
+    await ctx.state.set({ scopeKind: "instance", stateKey: STATE_KEYS.syncStats }, stats);
+    await ctx.state.set({ scopeKind: "instance", stateKey: STATE_KEYS.lastSyncAt }, new Date().toISOString());
+    await ctx.metrics.write("erpnext.sync.full", 1, { status: "ok", trigger });
+    ctx.logger.info("ERPNext full sync completed");
+  } catch (err) {
+    ctx.logger.error(`ERPNext full sync failed: ${summarizeError(err)}`);
+    await ctx.metrics.write("erpnext.sync.full", 1, { status: "error" });
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Webhook HMAC validation (HMAC-SHA256 as Frappe uses)
 // ---------------------------------------------------------------------------
 
@@ -390,35 +423,33 @@ function registerDataHandlers(ctx: PluginContext): void {
     if (!scopeId) return [];
     return ctx.entities.list({ scopeKind, scopeId, limit: 50, offset: 0 });
   });
+
+  // UI: document status by ID (used by comment annotations)
+  ctx.data.register("erp-doc-status", async (params) => {
+    const id = getStringParam(params, "id", true);
+    try {
+      const { client } = await resolveErpConfig(ctx);
+      // We search for the document by name (ID)
+      const results = await client.globalSearch(ctx, id, undefined, 1);
+      if (results && results.length > 0) {
+        const first = results[0] as { doctype: string; name: string };
+        const doc = await client.getDocument(ctx, first.doctype, first.name, ["name", "doctype", "status", "docstatus"]);
+        return {
+          name: doc.name,
+          doctype: doc.doctype,
+          status: doc.status || (doc.docstatus === 1 ? "Submitted" : doc.docstatus === 2 ? "Cancelled" : "Draft"),
+        };
+      }
+    } catch (err) {
+      ctx.logger.error(`erp-doc-status failed for ${id}: ${summarizeError(err)}`);
+    }
+    return null;
+  });
 }
 
 function registerJobs(ctx: PluginContext): void {
   ctx.jobs.register(JOB_KEYS.fullSync, async (job: PluginJobContext) => {
-    ctx.logger.info(`ERPNext full sync started (run: ${job.runId})`);
-    try {
-      const { client, config } = await resolveErpConfig(ctx);
-      if (!config.syncEnabled) {
-        ctx.logger.info("ERPNext sync disabled in config, skipping");
-        return;
-      }
-
-      const stats: Record<string, unknown> = {};
-      await Promise.allSettled([
-        client.getAccountingStats(ctx).then((s) => { stats.accounting = s; }),
-        client.getSellingStats(ctx).then((s) => { stats.selling = s; }),
-        client.getBuyingStats(ctx).then((s) => { stats.buying = s; }),
-        client.getStockStats(ctx).then((s) => { stats.stock = s; }),
-        client.getHrStats(ctx).then((s) => { stats.hr = s; }),
-      ]);
-
-      await ctx.state.set({ scopeKind: "instance", stateKey: STATE_KEYS.syncStats }, stats);
-      await ctx.state.set({ scopeKind: "instance", stateKey: STATE_KEYS.lastSyncAt }, new Date().toISOString());
-      await ctx.metrics.write("erpnext.sync.full", 1, { status: "ok", trigger: job.trigger });
-      ctx.logger.info("ERPNext full sync completed");
-    } catch (err) {
-      ctx.logger.error(`ERPNext full sync failed: ${summarizeError(err)}`);
-      await ctx.metrics.write("erpnext.sync.full", 1, { status: "error" });
-    }
+    await performFullSync(ctx, job.trigger);
   });
 
   ctx.jobs.register(JOB_KEYS.pendingDocuments, async (job: PluginJobContext) => {
@@ -702,7 +733,7 @@ function registerToolHandlers(ctx: PluginContext): void {
     async (params, _runCtx): Promise<ToolResult> => {
       const p = params as Record<string, unknown>;
       try {
-        const { client } = await resolveErpConfig(ctx);
+        const { client, config } = await resolveErpConfig(ctx);
         const reportName = getStringParam(p, "report_name", true);
         const filters = getObjectParam(p, "filters");
         const result = await client.getReport(ctx, reportName, filters);
@@ -730,7 +761,7 @@ function registerToolHandlers(ctx: PluginContext): void {
     async (params, _runCtx): Promise<ToolResult> => {
       const p = params as Record<string, unknown>;
       try {
-        const { client } = await resolveErpConfig(ctx);
+        const { client, config } = await resolveErpConfig(ctx);
         const query = getStringParam(p, "query", true);
         const doctypes = getArrayParam<string>(p, "doctypes");
         const limit = getNumberParam(p, "limit", 20);
@@ -776,8 +807,8 @@ function registerToolHandlers(ctx: PluginContext): void {
 }
 
 function registerActionHandlers(ctx: PluginContext): void {
-  ctx.onAction(ACTION_KEYS.syncNow, async () => {
-    await ctx.jobs.run(JOB_KEYS.fullSync);
+  ctx.actions.register(ACTION_KEYS.syncNow, async () => {
+    await performFullSync(ctx, "manual");
     return { success: true, timestamp: new Date().toISOString() };
   });
 }

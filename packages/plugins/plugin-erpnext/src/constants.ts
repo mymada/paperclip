@@ -8,6 +8,7 @@ export const SLOT_IDS = {
   dashboardWidget: "erpnext-dashboard-widget",
   issueTab: "erpnext-issue-tab",
   projectTab: "erpnext-project-tab",
+  commentAnnotation: "erpnext-comment-annotation",
 } as const;
 
 export const EXPORT_NAMES = {
@@ -16,6 +17,7 @@ export const EXPORT_NAMES = {
   dashboardWidget: "ERPNextDashboardWidget",
   issueTab: "ERPNextIssueTab",
   projectTab: "ERPNextProjectTab",
+  commentAnnotation: "ERPNextCommentAnnotation",
 } as const;
 
 export const JOB_KEYS = {

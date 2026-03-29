@@ -870,6 +870,12 @@ Subtasks delegated by the \`erp-manager\`, typically triggered by:
         exportName: EXPORT_NAMES.projectTab,
         entityTypes: ["project"],
       },
+      {
+        type: "commentAnnotation",
+        id: SLOT_IDS.commentAnnotation,
+        displayName: "ERPNext Status",
+        exportName: EXPORT_NAMES.commentAnnotation,
+      },
     ],
   },
 };
