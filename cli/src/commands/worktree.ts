@@ -2307,9 +2307,10 @@ async function applyMergePlan(input: {
             .where(eq(documentRevisions.documentId, documentPlan.source.documentId))
         ).map((row) => row.id),
       );
+      const revisionsToInsert = [];
       for (const revisionPlan of documentPlan.revisionsToInsert) {
         if (existingRevisionIds.has(revisionPlan.source.id)) continue;
-        await tx.insert(documentRevisions).values({
+        revisionsToInsert.push({
           id: revisionPlan.source.id,
           companyId,
           documentId: documentPlan.source.documentId,
@@ -2320,7 +2321,10 @@ async function applyMergePlan(input: {
           createdByUserId: revisionPlan.source.createdByUserId,
           createdAt: revisionPlan.source.createdAt,
         });
-        insertedDocumentRevisions += 1;
+      }
+      if (revisionsToInsert.length > 0) {
+        await tx.insert(documentRevisions).values(revisionsToInsert);
+        insertedDocumentRevisions += revisionsToInsert.length;
       }
     }
 
