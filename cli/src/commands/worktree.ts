@@ -2043,10 +2043,13 @@ async function applyMergePlan(input: {
       )
       : new Set<string>();
 
+    const newProjects = [];
+    const newProjectWorkspaces = [];
+
     let insertedProjects = 0;
     let insertedProjectWorkspaces = 0;
     for (const project of projectImports) {
-      await tx.insert(projects).values({
+      newProjects.push({
         id: project.source.id,
         companyId,
         goalId: project.targetGoalId,
@@ -2063,11 +2066,10 @@ async function applyMergePlan(input: {
         createdAt: project.source.createdAt,
         updatedAt: project.source.updatedAt,
       });
-      insertedProjects += 1;
 
       for (const workspace of project.workspaces) {
         if (existingImportedWorkspaceIds.has(workspace.id)) continue;
-        await tx.insert(projectWorkspaces).values({
+        newProjectWorkspaces.push({
           id: workspace.id,
           companyId,
           projectId: project.source.id,
@@ -2088,8 +2090,17 @@ async function applyMergePlan(input: {
           createdAt: workspace.createdAt,
           updatedAt: workspace.updatedAt,
         });
-        insertedProjectWorkspaces += 1;
       }
+    }
+
+    if (newProjects.length > 0) {
+      await tx.insert(projects).values(newProjects);
+      insertedProjects = newProjects.length;
+    }
+
+    if (newProjectWorkspaces.length > 0) {
+      await tx.insert(projectWorkspaces).values(newProjectWorkspaces);
+      insertedProjectWorkspaces = newProjectWorkspaces.length;
     }
 
     const issueCandidates = input.plan.issuePlans.filter(
