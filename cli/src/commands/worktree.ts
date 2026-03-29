@@ -2196,12 +2196,14 @@ async function applyMergePlan(input: {
 
     const insertedIssueIdentifiers = new Map<string, string>();
     let insertedIssues = 0;
+
+    const issueValuesToInsert = [];
     for (const issue of issueInserts) {
       const issueNumber = nextIssueNumber;
       nextIssueNumber += 1;
       const identifier = `${input.company.issuePrefix}-${issueNumber}`;
       insertedIssueIdentifiers.set(issue.source.id, identifier);
-      await tx.insert(issues).values({
+      issueValuesToInsert.push({
         id: issue.source.id,
         companyId,
         projectId: issue.targetProjectId,
@@ -2236,6 +2238,12 @@ async function applyMergePlan(input: {
         updatedAt: issue.source.updatedAt,
       });
       insertedIssues += 1;
+    }
+
+    if (issueValuesToInsert.length > 0) {
+      for (let i = 0; i < issueValuesToInsert.length; i += 1000) {
+        await tx.insert(issues).values(issueValuesToInsert.slice(i, i + 1000));
+      }
     }
 
     const commentCandidates = input.plan.commentPlans.filter(
