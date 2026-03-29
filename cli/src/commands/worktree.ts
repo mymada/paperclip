@@ -425,10 +425,10 @@ export function resolveGitWorktreeAddArgs(input: {
   return ["worktree", "add", "-b", input.branchName, input.targetPath, commitish];
 }
 
-function readPidFilePort(postmasterPidFile: string): number | null {
-  if (!existsSync(postmasterPidFile)) return null;
+async function readPidFilePort(postmasterPidFile: string): Promise<number | null> {
   try {
-    const lines = readFileSync(postmasterPidFile, "utf8").split("\n");
+    const content = await fsPromises.readFile(postmasterPidFile, "utf8");
+    const lines = content.split("\n");
     const port = Number(lines[3]?.trim());
     return Number.isInteger(port) && port > 0 ? port : null;
   } catch {
@@ -436,10 +436,10 @@ function readPidFilePort(postmasterPidFile: string): number | null {
   }
 }
 
-function readRunningPostmasterPid(postmasterPidFile: string): number | null {
-  if (!existsSync(postmasterPidFile)) return null;
+async function readRunningPostmasterPid(postmasterPidFile: string): Promise<number | null> {
   try {
-    const pid = Number(readFileSync(postmasterPidFile, "utf8").split("\n")[0]?.trim());
+    const content = await fsPromises.readFile(postmasterPidFile, "utf8");
+    const pid = Number(content.split("\n")[0]?.trim());
     if (!Number.isInteger(pid) || pid <= 0) return null;
     process.kill(pid, 0);
     return pid;
@@ -798,10 +798,10 @@ async function ensureEmbeddedPostgres(dataDir: string, preferredPort: number): P
   }
 
   const postmasterPidFile = path.resolve(dataDir, "postmaster.pid");
-  const runningPid = readRunningPostmasterPid(postmasterPidFile);
+  const runningPid = await readRunningPostmasterPid(postmasterPidFile);
   if (runningPid) {
     return {
-      port: readPidFilePort(postmasterPidFile) ?? preferredPort,
+      port: (await readPidFilePort(postmasterPidFile)) ?? preferredPort,
       startedByThisProcess: false,
       stop: async () => {},
     };
