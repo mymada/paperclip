@@ -39,6 +39,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "ui.sidebar.register",
     "ui.dashboardWidget.register",
     "ui.detailTab.register",
+    "ui.commentAnnotation.register",
     "activity.log.write",
     "metrics.write",
   ],
