@@ -27,6 +27,10 @@ export const WEBHOOK_KEYS = {
   erpnextEvent: "erpnext-event",
 } as const;
 
+export const ACTION_KEYS = {
+  syncNow: "sync-now",
+} as const;
+
 /**
  * Tools exposed to agents via the plugin tool registry.
  * Each name maps to a handler in worker.ts.

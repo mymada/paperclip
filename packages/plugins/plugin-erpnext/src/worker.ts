@@ -17,7 +17,7 @@ import {
   type ToolResult,
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
-import { JOB_KEYS, STATE_KEYS, TOOL_NAMES, WEBHOOK_KEYS } from "./constants.js";
+import { ACTION_KEYS, JOB_KEYS, STATE_KEYS, TOOL_NAMES, WEBHOOK_KEYS } from "./constants.js";
 import { resolveErpConfig, invalidateClientCache, type ErpPluginConfig } from "./erp-client.js";
 
 // ---------------------------------------------------------------------------
@@ -775,6 +775,13 @@ function registerToolHandlers(ctx: PluginContext): void {
   );
 }
 
+function registerActionHandlers(ctx: PluginContext): void {
+  ctx.onAction(ACTION_KEYS.syncNow, async () => {
+    await ctx.jobs.run(JOB_KEYS.fullSync);
+    return { success: true, timestamp: new Date().toISOString() };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Plugin definition
 // ---------------------------------------------------------------------------
@@ -788,6 +795,7 @@ const plugin = definePlugin({
     registerDataHandlers(ctx);
     registerJobs(ctx);
     registerToolHandlers(ctx);
+    registerActionHandlers(ctx);
 
     ctx.logger.info("ERPNext plugin ready");
   },
