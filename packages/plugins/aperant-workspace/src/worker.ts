@@ -4,6 +4,17 @@ import { MergeOrchestrator } from "./merge/orchestrator.js";
 
 const plugin = definePlugin({
   async setup(ctx) {
+    ctx.events.on("issue.created", async (event) => {
+       const issueId = event.entityId;
+       if (!issueId) return;
+       await ctx.state.set({
+         scopeKind: "issue",
+         scopeId: issueId,
+         stateKey: "seen",
+         value: true
+       });
+    });
+
     ctx.events.on("issue.updated", async (event) => {
       const issueId = event.entityId;
       if (!issueId) return;
@@ -20,7 +31,7 @@ const plugin = definePlugin({
           const projectPath = process.env.PAPERCLIP_PROJECT_ROOT || process.cwd();
 
           try {
-             provisionWorktree(projectPath, issueId);
+             await provisionWorktree(projectPath, issueId);
              ctx.logger.info("Successfully provisioned isolated worktree", { issueId });
           } catch (e) {
              ctx.logger.error("Failed to provision worktree", { issueId, error: String(e) });
@@ -50,7 +61,7 @@ const plugin = definePlugin({
              }
 
              // 3. Cleanup worktree
-             cleanupWorktree(projectPath, issueId);
+             await cleanupWorktree(projectPath, issueId);
              ctx.logger.info("Successfully cleaned up isolated worktree", { issueId });
 
           } catch (e) {

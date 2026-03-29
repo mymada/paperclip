@@ -13,7 +13,8 @@
  * TS equivalent: apps/desktop/src/main/utils/git-isolation.ts:getIsolatedGitEnv()
  */
 
-import { execFileSync } from 'child_process';
+import { SpawnOptions } from 'child_process';
+import { spawnPromise } from './spawn-promise.js';
 
 /**
  * Git environment variables that can cause cross-contamination between worktrees.
@@ -98,12 +99,11 @@ export function getIsolatedGitEnv(
  */
 export function getIsolatedGitSpawnOptions(
   cwd: string,
-  additionalOptions: Record<string, unknown> = {}
-): Record<string, unknown> {
+  additionalOptions: SpawnOptions = {}
+): SpawnOptions {
   return {
     cwd,
     env: getIsolatedGitEnv(),
-    encoding: 'utf-8',
     ...additionalOptions,
   };
 }
@@ -144,23 +144,23 @@ export interface WorktreeBranchDetectionResult {
  * );
  * ```
  */
-export function detectWorktreeBranch(
+export async function detectWorktreeBranch(
   worktreePath: string,
   specId: string,
   options: { timeout?: number; logPrefix?: string } = {}
-): WorktreeBranchDetectionResult {
+): Promise<WorktreeBranchDetectionResult> {
   const { timeout = 30000, logPrefix = '[WORKTREE_BRANCH_DETECTION]' } = options;
   const expectedBranch = `auto-claude/${specId}`;
   let branch = expectedBranch;
   let usingFallback = false;
 
   try {
-    const detectedBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    const result = await spawnPromise('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
       cwd: worktreePath,
-      encoding: 'utf-8',
       timeout,
       env: getIsolatedGitEnv()
-    }).trim();
+    });
+    const detectedBranch = result.stdout.trim();
 
     // SECURITY: Use strict exact-match validation (not prefix matching) to prevent
     // accidentally deleting a different task's auto-claude branch. When git rev-parse
@@ -199,16 +199,14 @@ export function detectWorktreeBranch(
  * import { refreshGitIndex } from './git-isolation.js';
  *
  * // Call before git status to ensure accurate results
- * refreshGitIndex(projectPath);
+ * await refreshGitIndex(projectPath);
  * const status = execFileSync('git', ['status', '--porcelain'], { cwd: projectPath });
  * ```
  */
-export function refreshGitIndex(cwd: string): void {
+export async function refreshGitIndex(cwd: string): Promise<void> {
   try {
-    execFileSync('git', ['update-index', '--refresh'], {
+    await spawnPromise('git', ['update-index', '--refresh'], {
       cwd,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
       env: getIsolatedGitEnv(),
     });
   } catch {
