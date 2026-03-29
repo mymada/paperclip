@@ -58,12 +58,14 @@ import {
   Trash2,
   MessageSquare
 } from "lucide-react";
+import { HermesIcon } from "./HermesIcon";
 
 type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 type AdapterType =
   | "claude_local"
   | "codex_local"
   | "gemini_local"
+  | "hermes_local"
   | "opencode_local"
   | "pi_local"
   | "cursor"
@@ -491,6 +493,7 @@ export function OnboardingWizard() {
     adapterType === "claude_local" ||
     adapterType === "codex_local" ||
     adapterType === "gemini_local" ||
+    adapterType === "hermes_local" ||
     adapterType === "opencode_local" ||
     adapterType === "cursor";
   const effectiveAdapterCommand =
@@ -499,6 +502,10 @@ export function OnboardingWizard() {
       ? "codex"
       : adapterType === "gemini_local"
         ? "gemini"
+      : adapterType === "hermes_local"
+        ? "hermes"
+      : adapterType === "pi_local"
+      ? "pi"
       : adapterType === "cursor"
       ? "agent"
       : adapterType === "opencode_local"
@@ -1485,6 +1492,12 @@ Follow this structure for every role in the plan.`,
                             desc: "Local Cursor agent"
                           },
                           {
+                            value: "hermes_local" as const,
+                            label: "Hermes Agent",
+                            icon: HermesIcon,
+                            desc: "Local multi-provider agent"
+                          },
+                          {
                             value: "openclaw_gateway" as const,
                             label: "OpenClaw Gateway",
                             icon: Bot,
@@ -1543,6 +1556,7 @@ Follow this structure for every role in the plan.`,
                   {(adapterType === "claude_local" ||
                     adapterType === "codex_local" ||
                     adapterType === "gemini_local" ||
+                    adapterType === "hermes_local" ||
                     adapterType === "opencode_local" ||
                     adapterType === "pi_local" ||
                     adapterType === "cursor") && (
