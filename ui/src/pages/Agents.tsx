@@ -188,6 +188,7 @@ export function Agents() {
                   effectiveView === "list" ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
                 )}
                 onClick={() => setView("list")}
+                aria-label="List view"
               >
                 <List className="h-3.5 w-3.5" />
               </button>
@@ -197,6 +198,7 @@ export function Agents() {
                   effectiveView === "org" ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
                 )}
                 onClick={() => setView("org")}
+                aria-label="Organization view"
               >
                 <GitBranch className="h-3.5 w-3.5" />
               </button>
