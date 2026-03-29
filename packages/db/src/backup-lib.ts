@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
@@ -270,7 +271,7 @@ function formatSqlLiteral(value: string): string {
   const sanitized = value.replace(/\u0000/g, "");
   let tag = "$paperclip$";
   while (sanitized.includes(tag)) {
-    tag = `$paperclip_${Math.random().toString(36).slice(2, 8)}$`;
+    tag = `$paperclip_${randomBytes(4).toString("hex")}$`;
   }
   return `${tag}${sanitized}${tag}`;
 }
