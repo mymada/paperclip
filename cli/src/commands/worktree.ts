@@ -2122,6 +2122,8 @@ async function applyMergePlan(input: {
 
     let insertedProjects = 0;
     let insertedProjectWorkspaces = 0;
+    const projectWorkspacesToInsert: Array<typeof projectWorkspaces.$inferInsert> = [];
+
     for (const project of projectImports) {
       await tx.insert(projects).values({
         id: project.source.id,
@@ -2144,7 +2146,7 @@ async function applyMergePlan(input: {
 
       for (const workspace of project.workspaces) {
         if (existingImportedWorkspaceIds.has(workspace.id)) continue;
-        await tx.insert(projectWorkspaces).values({
+        projectWorkspacesToInsert.push({
           id: workspace.id,
           companyId,
           projectId: project.source.id,
@@ -2167,6 +2169,10 @@ async function applyMergePlan(input: {
         });
         insertedProjectWorkspaces += 1;
       }
+    }
+
+    if (projectWorkspacesToInsert.length > 0) {
+      await tx.insert(projectWorkspaces).values(projectWorkspacesToInsert);
     }
 
     const issueCandidates = input.plan.issuePlans.filter(
