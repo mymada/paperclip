@@ -419,14 +419,19 @@ async function writeBundleFiles(
   files: Record<string, string>,
   options?: { overwriteExisting?: boolean },
 ) {
-  for (const [relativePath, content] of Object.entries(files)) {
-    const normalizedPath = normalizeRelativeFilePath(relativePath);
-    const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
-    const existingStat = await statIfExists(absolutePath);
-    if (existingStat?.isFile() && !options?.overwriteExisting) continue;
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, content, "utf8");
-  }
+  // ⚡ Bolt Optimization: Parallelize independent file system checks and write operations
+  // Expected Impact: Significantly reduces latency when processing bundles with multiple files
+  // by executing I/O bound operations concurrently rather than sequentially.
+  await Promise.all(
+    Object.entries(files).map(async ([relativePath, content]) => {
+      const normalizedPath = normalizeRelativeFilePath(relativePath);
+      const absolutePath = resolvePathWithinRoot(rootPath, normalizedPath);
+      const existingStat = await statIfExists(absolutePath);
+      if (existingStat?.isFile() && !options?.overwriteExisting) return;
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, content, "utf8");
+    })
+  );
 }
 
 export function syncInstructionsBundleConfigFromFilePath(
@@ -703,11 +708,18 @@ export function agentInstructionsService() {
       normalizeRelativeFilePath(relativePath),
       content,
     ] as const);
-    for (const [relativePath, content] of normalizedEntries) {
-      const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
-      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-      await fs.writeFile(absolutePath, content, "utf8");
-    }
+
+    // ⚡ Bolt Optimization: Parallelize independent file system write operations
+    // Expected Impact: Significantly reduces latency when materializing bundles
+    // with multiple files by writing them concurrently instead of sequentially.
+    await Promise.all(
+      normalizedEntries.map(async ([relativePath, content]) => {
+        const absolutePath = resolvePathWithinRoot(rootPath, relativePath);
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+        await fs.writeFile(absolutePath, content, "utf8");
+      })
+    );
+
     if (!normalizedEntries.some(([relativePath]) => relativePath === entryFile)) {
       await fs.writeFile(resolvePathWithinRoot(rootPath, entryFile), "", "utf8");
     }
