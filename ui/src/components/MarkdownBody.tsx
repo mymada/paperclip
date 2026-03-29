@@ -2,6 +2,7 @@ import { isValidElement, useEffect, useId, useState, type ReactNode } from "reac
 import Markdown, { type Components } from "react-markdown";
 import DOMPurify from "dompurify";
 import remarkGfm from "remark-gfm";
+import DOMPurify from "dompurify";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { mentionChipInlineStyle, parseMentionChipHref } from "../lib/mention-chips";
