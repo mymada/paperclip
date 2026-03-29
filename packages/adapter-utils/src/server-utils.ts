@@ -839,3 +839,13 @@ export async function runChildProcess(
       .catch(reject);
   });
 }
+
+export function applyBillingModeOverride(
+  autoDetected: "api" | "subscription",
+  billingMode: string,
+): "api" | "subscription" {
+  const normalized = billingMode.trim().toLowerCase();
+  if (normalized === "subscription") return "subscription";
+  if (normalized === "metered" || normalized === "api") return "api";
+  return autoDetected;
+}

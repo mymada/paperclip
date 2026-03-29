@@ -46,6 +46,11 @@ import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
+import { MyIssues } from "./pages/MyIssues";
+import { Parcours } from "./pages/Parcours";
+import { Routines } from "./pages/Routines";
+import { RoutineDetail } from "./pages/RoutineDetail";
+import { CompanySkills } from "./pages/CompanySkills";
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -154,6 +159,11 @@ function boardRoutes() {
       <Route path="projects/:projectId/issues/:filter" element={<ProjectDetail />} />
       <Route path="projects/:projectId/configuration" element={<ProjectDetail />} />
       <Route path="projects/:projectId/budget" element={<ProjectDetail />} />
+      <Route path="my-issues" element={<MyIssues />} />
+      <Route path="parcours" element={<Parcours />} />
+      <Route path="routines" element={<Routines />} />
+      <Route path="routines/:routineId" element={<RoutineDetail />} />
+      <Route path="skills" element={<CompanySkills />} />
       <Route path="issues" element={<Issues />} />
       <Route path="issues/all" element={<Navigate to="/issues" replace />} />
       <Route path="issues/active" element={<Navigate to="/issues" replace />} />
