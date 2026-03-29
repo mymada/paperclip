@@ -104,3 +104,69 @@ describe("PaperclipApiClient", () => {
     expect(retryHeaders.authorization).toBe("Bearer board-token-123");
   });
 });
+
+describe("ApiConnectionError", () => {
+  it("formats error correctly with an Error cause", () => {
+    const error = new ApiConnectionError({
+      apiBase: "http://localhost:3100",
+      path: "/api/test",
+      method: "POST",
+      cause: new Error("Network timeout"),
+    });
+
+    expect(error.url).toBe("http://localhost:3100/api/test");
+    expect(error.method).toBe("POST");
+    expect(error.causeMessage).toBe("Network timeout");
+    expect(error.message).toContain("Could not reach the Paperclip API.");
+    expect(error.message).toContain("Request: POST http://localhost:3100/api/test");
+    expect(error.message).toContain("Cause: Network timeout");
+    expect(error.message).toContain("curl http://localhost:3100/api/health");
+    expect(error.message).toContain("pnpm dev");
+  });
+
+  it("formats error correctly with a string cause", () => {
+    const error = new ApiConnectionError({
+      apiBase: "http://localhost:3100",
+      path: "/api/test",
+      method: "GET",
+      cause: "ECONNREFUSED",
+    });
+
+    expect(error.causeMessage).toBe("ECONNREFUSED");
+    expect(error.message).toContain("Cause: ECONNREFUSED");
+  });
+
+  it("formats error correctly with no cause", () => {
+    const error = new ApiConnectionError({
+      apiBase: "http://localhost:3100",
+      path: "/api/test",
+      method: "GET",
+    });
+
+    expect(error.causeMessage).toBeUndefined();
+    expect(error.message).not.toContain("Cause:");
+    expect(error.message).toContain("Request: GET http://localhost:3100/api/test");
+  });
+
+  it("normalizes trailing slashes in apiBase and leading slashes in path", () => {
+    const error = new ApiConnectionError({
+      apiBase: "http://localhost:3100///",
+      path: "api/test",
+      method: "DELETE",
+    });
+
+    expect(error.url).toBe("http://localhost:3100/api/test");
+    expect(error.message).toContain("curl http://localhost:3100/api/health");
+  });
+
+  it("formats health check URL properly even when request path has /api/ in it", () => {
+    const error = new ApiConnectionError({
+      apiBase: "http://localhost:3100",
+      path: "/api/issues/1/checkout",
+      method: "POST",
+    });
+
+    expect(error.url).toBe("http://localhost:3100/api/issues/1/checkout");
+    expect(error.message).toContain("curl http://localhost:3100/api/health");
+  });
+});
