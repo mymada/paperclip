@@ -45,29 +45,42 @@ describe("sortAgentsByStoredOrder", () => {
   });
 });
 
-describe("agent-order ID normalizer", () => {
-  it("returns an empty array for non-array inputs", () => {
+describe("normalizeIdList", () => {
+  it("returns an empty array when given a non-array value", () => {
     expect(normalizeIdList(null)).toEqual([]);
     expect(normalizeIdList(undefined)).toEqual([]);
-    expect(normalizeIdList("not-an-array")).toEqual([]);
+    expect(normalizeIdList("string")).toEqual([]);
     expect(normalizeIdList(123)).toEqual([]);
-    expect(normalizeIdList({ a: 1 })).toEqual([]);
+    expect(normalizeIdList({ foo: "bar" })).toEqual([]);
+    expect(normalizeIdList(true)).toEqual([]);
   });
 
-  it("filters out non-string items", () => {
-    expect(normalizeIdList([1, 2, 3])).toEqual([]);
-    expect(normalizeIdList([null, undefined, true, {}])).toEqual([]);
-    expect(normalizeIdList(["a", 1, "b", null, "c"])).toEqual(["a", "b", "c"]);
+  it("returns the exact array when given an array of valid strings", () => {
+    expect(normalizeIdList(["a", "b", "c"])).toEqual(["a", "b", "c"]);
+    expect(normalizeIdList(["single"])).toEqual(["single"]);
   });
 
   it("filters out empty strings", () => {
-    expect(normalizeIdList(["", " ", "  "])).toEqual([" ", "  "]);
     expect(normalizeIdList(["a", "", "b"])).toEqual(["a", "b"]);
+    expect(normalizeIdList(["", ""])).toEqual([]);
+    expect(normalizeIdList([" "])).toEqual([" "]); // Assuming whitespace is a valid string, length > 0
   });
 
-  it("preserves valid non-empty strings", () => {
-    const ids = ["agent-1", "agent-2", "agent-3"];
-    expect(normalizeIdList(ids)).toEqual(ids);
+  it("filters out non-string values from an array", () => {
+    expect(
+      normalizeIdList([
+        "a",
+        null,
+        "b",
+        undefined,
+        123,
+        { obj: true },
+        true,
+        false,
+        "c",
+        "",
+      ]),
+    ).toEqual(["a", "b", "c"]);
   });
 
   it("handles a complex mixed array", () => {
