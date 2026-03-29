@@ -46,4 +46,21 @@ describe("MarkdownBody", () => {
     expect(html).toContain('data-mention-kind="project"');
     expect(html).toContain("--paperclip-mention-project-color:#336699");
   });
+
+  it("renders mermaid diagrams as placeholders initially", () => {
+    const html = renderToStaticMarkup(
+      <ThemeProvider>
+        <MarkdownBody>
+          {`\`\`\`mermaid
+graph TD
+    A[Christmas] -->|Get money| B(Go shopping)
+\`\`\``}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    expect(html).toContain("Rendering Mermaid diagram...");
+    expect(html).toContain("language-mermaid");
+    expect(html).toContain("graph TD");
+  });
 });
