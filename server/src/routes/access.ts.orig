@@ -102,7 +102,7 @@ function buildCliAuthApprovalPath(challengeId: string, token: string) {
   return `/cli-auth/${challengeId}?token=${encodeURIComponent(token)}`;
 }
 
-async function readSkillMarkdown(skillName: string): Promise<string | null> {
+function readSkillMarkdown(skillName: string): string | null {
   const normalized = skillName.trim().toLowerCase();
   if (
     normalized !== "paperclip" &&
@@ -119,7 +119,7 @@ async function readSkillMarkdown(skillName: string): Promise<string | null> {
   ];
   for (const skillPath of candidates) {
     try {
-      return await fs.promises.readFile(skillPath, "utf8");
+      return fs.readFileSync(skillPath, "utf8");
     } catch {
       // Continue to next candidate.
     }
@@ -1236,7 +1236,7 @@ export function buildInviteOnboardingTextDocument(
     And set the PAPERCLIP_API_KEY and PAPERCLIP_API_URL in your environment variables as specified here:
     https://docs.openclaw.ai/help/environment
 
-    e.g. 
+    e.g.
 
     {
       env: {
@@ -1902,9 +1902,9 @@ export function accessRoutes(
     });
   });
 
-  router.get("/skills/:skillName", async (req, res) => {
+  router.get("/skills/:skillName", (req, res) => {
     const skillName = (req.params.skillName as string).trim().toLowerCase();
-    const markdown = await readSkillMarkdown(skillName);
+    const markdown = readSkillMarkdown(skillName);
     if (!markdown) throw notFound("Skill not found");
     res.type("text/markdown").send(markdown);
   });
