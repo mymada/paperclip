@@ -2048,6 +2048,8 @@ async function applyMergePlan(input: {
 
     let insertedProjects = 0;
     let insertedProjectWorkspaces = 0;
+    const projectWorkspacesToInsert: Array<typeof projectWorkspaces.$inferInsert> = [];
+
     for (const project of projectImports) {
       newProjects.push({
         id: project.source.id,
