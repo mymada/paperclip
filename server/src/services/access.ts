@@ -183,15 +183,23 @@ export function accessService(db: Db) {
         await tx.delete(companyMemberships).where(inArray(companyMemberships.id, toDelete));
       }
 
+      // ⚡ Bolt Optimization:
+      // Replaced N+1 individual inserts with a single bulk insert array.
+      // This reduces database round-trips from O(N) to O(1) for N missing companies.
+      const toInsert = [];
       for (const companyId of target) {
         if (existingByCompany.has(companyId)) continue;
-        await tx.insert(companyMemberships).values({
+        toInsert.push({
           companyId,
           principalType: "user",
           principalId: userId,
           status: "active",
           membershipRole: "member",
         });
+      }
+
+      if (toInsert.length > 0) {
+        await tx.insert(companyMemberships).values(toInsert);
       }
     });
 
