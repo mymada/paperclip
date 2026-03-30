@@ -1,0 +1,6 @@
+{
+  "database": {
+    "mode": "embedded-postgres",
+    "embeddedPostgresPort": 54330
+  }
+}
