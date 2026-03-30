@@ -270,11 +270,11 @@ function DocumentViewer({
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-        <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground" aria-label="Go back">
           <ArrowLeft className="h-4 w-4" />
         </button>
         <h3 className="text-sm font-semibold flex-1 truncate">{title}</h3>
-        <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
+        <button onClick={onBack} className="text-muted-foreground hover:text-foreground" aria-label="Close document">
           <X className="h-4 w-4" />
         </button>
       </div>
