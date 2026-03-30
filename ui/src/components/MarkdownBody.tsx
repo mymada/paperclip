@@ -1,6 +1,7 @@
 import { isValidElement, useEffect, useId, useState, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import DOMPurify from "dompurify";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
 import { mentionChipInlineStyle, parseMentionChipHref } from "../lib/mention-chips";
@@ -59,7 +60,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
         });
         const rendered = await mermaid.render(`paperclip-mermaid-${renderId}`, source);
         if (!active) return;
-        setSvg(rendered.svg);
+        setSvg(DOMPurify.sanitize(rendered.svg));
       })
       .catch((err) => {
         if (!active) return;
