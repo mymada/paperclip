@@ -667,6 +667,7 @@ export function IssueDocumentsSection({
                     className="text-muted-foreground transition-colors"
                     title="Aperçu plein écran"
                     onClick={() => setPreviewDocumentKey(doc.key)}
+                    aria-label="Aperçu plein écran"
                   >
                     <Eye className="h-3.5 w-3.5" />
                   </Button>
@@ -679,6 +680,7 @@ export function IssueDocumentsSection({
                     )}
                     title={copiedDocumentKey === doc.key ? "Copied" : "Copy document"}
                     onClick={() => void copyDocumentBody(doc.key, activeDraft?.body ?? doc.body)}
+                    aria-label={copiedDocumentKey === doc.key ? "Copied" : "Copy document"}
                   >
                     {copiedDocumentKey === doc.key ? (
                       <Check className="h-3.5 w-3.5" />
@@ -693,6 +695,7 @@ export function IssueDocumentsSection({
                         size="icon-xs"
                         className="text-muted-foreground"
                         title="Document actions"
+                        aria-label="Document actions"
                       >
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </Button>
