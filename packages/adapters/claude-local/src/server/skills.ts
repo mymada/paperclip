@@ -23,6 +23,12 @@ function resolveClaudeSkillsHome(config: Record<string, unknown>) {
     typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
       ? (config.env as Record<string, unknown>)
       : {};
+
+  const claudeHome = asString(env.CLAUDE_HOME);
+  if (claudeHome) {
+    return path.join(path.resolve(claudeHome), "skills");
+  }
+
   const configuredHome = asString(env.HOME);
   const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
   return path.join(home, ".claude", "skills");
@@ -35,6 +41,14 @@ async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promis
   const desiredSet = new Set(desiredSkills);
   const skillsHome = resolveClaudeSkillsHome(config);
   const installed = await readInstalledSkillTargets(skillsHome);
+
+  const env =
+    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+      ? (config.env as Record<string, unknown>)
+      : {};
+  const claudeHome = asString(env.CLAUDE_HOME);
+  const locationLabel = claudeHome ? path.join(claudeHome, "skills") : "~/.claude/skills";
+
   const entries: AdapterSkillEntry[] = availableEntries.map((entry) => ({
     key: entry.key,
     runtimeName: entry.runtimeName,
@@ -82,7 +96,7 @@ async function buildClaudeSkillSnapshot(config: Record<string, unknown>): Promis
       state: "external",
       origin: "user_installed",
       originLabel: "User-installed",
-      locationLabel: "~/.claude/skills",
+      locationLabel,
       readOnly: true,
       sourcePath: null,
       targetPath: installedEntry.targetPath ?? path.join(skillsHome, name),

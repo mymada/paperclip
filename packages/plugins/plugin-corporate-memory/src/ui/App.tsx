@@ -968,18 +968,11 @@ export function CorporateMemorySidebarLink({ context }: PluginSidebarProps) {
     <a
       href={href}
       aria-current={isActive ? "page" : undefined}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "8px",
-        padding: "6px 12px",
-        fontSize: "13px",
-        fontWeight: 500,
-        textDecoration: "none",
-        borderRadius: "6px",
-        color: isActive ? "var(--foreground, #111)" : "var(--foreground-muted, #555)",
-        background: isActive ? "var(--accent, #f0f0f8)" : "transparent",
-      }}
+      className={`flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium transition-colors rounded-[var(--radius-sm)] ${
+        isActive
+          ? "bg-accent text-foreground"
+          : "text-foreground/80 hover:bg-accent/50 hover:text-foreground"
+      }`}
     >
       <svg
         width="16"
@@ -991,6 +984,7 @@ export function CorporateMemorySidebarLink({ context }: PluginSidebarProps) {
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"
+        className="h-4 w-4 shrink-0"
       >
         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
@@ -998,7 +992,7 @@ export function CorporateMemorySidebarLink({ context }: PluginSidebarProps) {
         <line x1="10" y1="11" x2="16" y2="11" />
         <line x1="10" y1="15" x2="14" y2="15" />
       </svg>
-      Mémoire d'Entreprise
+      <span className="truncate">Mémoire d'Entreprise</span>
     </a>
   );
 }

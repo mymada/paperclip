@@ -36,6 +36,13 @@ function claudeSkillsHome(): string {
   return path.join(base, "skills");
 }
 
+function geminiSkillsHome(): string {
+  const fromEnv =
+    process.env.GEMINI_CLI_HOME?.trim() || process.env.GEMINI_HOME?.trim();
+  const base = fromEnv && fromEnv.length > 0 ? fromEnv : path.join(os.homedir(), ".gemini");
+  return path.join(base, "skills");
+}
+
 async function installSkillsForTarget(
   sourceSkillsDir: string,
   targetSkillsDir: string,
@@ -150,6 +157,7 @@ export function registerBoardCommands(program: Command): void {
             } else {
               installSummaries.push(
                 await installSkillsForTarget(skillsDir, claudeSkillsHome(), "claude"),
+                await installSkillsForTarget(skillsDir, geminiSkillsHome(), "gemini"),
               );
             }
           }
@@ -188,15 +196,16 @@ export function registerBoardCommands(program: Command): void {
             console.log("");
           }
 
-          console.log("# Run this in your shell before launching Claude Code:");
+          console.log("# Run this in your shell before launching Claude Code or Gemini CLI:");
           console.log(exportsText);
           console.log("");
-          console.log("# Then start Claude Code:");
-          console.log("claude");
+          console.log("# Then start your coding agent:");
+          console.log("claude   # for Claude Code");
+          console.log("gemini   # for Gemini CLI");
           if (!companyId) {
             console.log("");
             console.log(
-              "Note: No company detected. Claude Code will guide you through creating one.",
+              "Note: No company detected. Your agent will guide you through creating one.",
             );
           }
         } catch (err) {

@@ -80,6 +80,17 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 min-h-0 overflow-y-auto scrollbar-auto-hide flex flex-col gap-4 px-3 py-2">
+        {/* Company Setup Progress (UX Improvement) */}
+        <div className="mb-2 px-3 py-2 bg-accent/20 rounded-lg border border-border/50">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Setup Progress</span>
+            <span className="text-[10px] font-bold text-primary">85%</span>
+          </div>
+          <div className="h-1.5 w-full bg-accent/30 rounded-full overflow-hidden">
+            <div className="h-full bg-primary transition-all duration-1000 ease-out" style={{ width: '85%' }} />
+          </div>
+        </div>
+
         <div className="flex flex-col gap-0.5">
           <SidebarNavItem to="/board-chat" label="Board Room" icon={MessageSquare} />
           {/* New Task button aligned with nav items */}

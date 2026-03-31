@@ -233,6 +233,8 @@ export function Layout() {
     };
   }, [isMobile, updateMobileNavVisibility]);
 
+  const showCompanyRail = companies.length > 1;
+
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
 
@@ -291,7 +293,7 @@ export function Layout() {
             )}
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <CompanyRail />
+              {showCompanyRail && <CompanyRail />}
               {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
             </div>
             <div className="border-t border-r border-border px-3 py-3 bg-background">
@@ -342,7 +344,7 @@ export function Layout() {
         ) : (
           <div className="flex h-full flex-col shrink-0">
             <div className="flex flex-1 min-h-0">
-              <CompanyRail />
+              {showCompanyRail && <CompanyRail />}
               <div
                 className={cn(
                   "overflow-hidden transition-[width] duration-100 ease-out",
@@ -402,7 +404,8 @@ export function Layout() {
         <div className={cn("flex min-w-0 flex-col", isMobile ? "w-full" : "h-full flex-1")}>
           <div
             className={cn(
-              isMobile && "sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85",
+              isMobile ? "sticky top-0 z-20" : "z-20",
+              "glass-effect"
             )}
           >
             <BreadcrumbBar />

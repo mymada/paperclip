@@ -73,8 +73,8 @@ async function startTempDatabase() {
     port,
     persistent: true,
     initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
-    onLog: () => {},
-    onError: () => {},
+    onLog: (msg) => console.log("[Postgres Log]", msg),
+    onError: (msg) => console.error("[Postgres Error]", msg),
   });
   await instance.initialise();
   await instance.start();
