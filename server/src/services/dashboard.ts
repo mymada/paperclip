@@ -19,9 +19,7 @@ export function dashboardService(db: Db) {
         taskRows,
         pendingApprovals,
         [monthSpendRow],
-        criticalCount,
-        stalledCount,
-        doneThisWeekCount,
+        issueMetricsRow,
         budgetOverview,
       ] = await Promise.all([
         db.select().from(companies).where(eq(companies.id, companyId)).then((rows) => rows[0] ?? null),
@@ -40,32 +38,20 @@ export function dashboardService(db: Db) {
         db.select({ monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
           .from(costEvents)
           .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, monthStart))),
-        db.select({ count: sql<number>`count(*)` })
+        db.select({
+          criticalCount: sql<number>`SUM(CASE WHEN ${issues.priority} = 'critical' AND ${issues.status} NOT IN ('done', 'cancelled') THEN 1 ELSE 0 END)::int`,
+          stalledCount: sql<number>`SUM(CASE WHEN ${issues.status} = 'in_progress' AND ${issues.updatedAt} < ${staleThreshold} THEN 1 ELSE 0 END)::int`,
+          doneThisWeekCount: sql<number>`SUM(CASE WHEN ${issues.status} = 'done' AND ${issues.completedAt} >= ${weekStart} THEN 1 ELSE 0 END)::int`,
+        })
           .from(issues)
-          .where(and(
-            eq(issues.companyId, companyId),
-            eq(issues.priority, "critical"),
-            notInArray(issues.status, ["done", "cancelled"]),
-          ))
-          .then((rows) => Number(rows[0]?.count ?? 0)),
-        db.select({ count: sql<number>`count(*)` })
-          .from(issues)
-          .where(and(
-            eq(issues.companyId, companyId),
-            eq(issues.status, "in_progress"),
-            lt(issues.updatedAt, staleThreshold),
-          ))
-          .then((rows) => Number(rows[0]?.count ?? 0)),
-        db.select({ count: sql<number>`count(*)` })
-          .from(issues)
-          .where(and(
-            eq(issues.companyId, companyId),
-            eq(issues.status, "done"),
-            gte(issues.completedAt, weekStart),
-          ))
-          .then((rows) => Number(rows[0]?.count ?? 0)),
+          .where(eq(issues.companyId, companyId))
+          .then((rows) => rows[0] ?? { criticalCount: 0, stalledCount: 0, doneThisWeekCount: 0 }),
         budgets.overview(companyId),
       ]);
+
+      const criticalCount = Number(issueMetricsRow.criticalCount || 0);
+      const stalledCount = Number(issueMetricsRow.stalledCount || 0);
+      const doneThisWeekCount = Number(issueMetricsRow.doneThisWeekCount || 0);
 
       if (!companyRow) throw notFound("Company not found");
 
