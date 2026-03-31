@@ -8,6 +8,7 @@ export const companySecrets = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull().references(() => companies.id),
     name: text("name").notNull(),
+    scope: text("scope"),
     provider: text("provider").notNull().default("local_encrypted"),
     externalRef: text("external_ref"),
     latestVersion: integer("latest_version").notNull().default(1),

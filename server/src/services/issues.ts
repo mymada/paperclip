@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
   agents,
+  approvals,
   assets,
   companies,
   companyMemberships,
@@ -10,6 +11,7 @@ import {
   goals,
   heartbeatRuns,
   executionWorkspaces,
+  issueApprovals,
   issueAttachments,
   issueInboxArchives,
   issueLabels,
@@ -899,6 +901,17 @@ export function issueService(db: Db) {
         const [issue] = await tx.insert(issues).values(values).returning();
         if (inputLabelIds) {
           await syncIssueLabels(issue.id, companyId, inputLabelIds, tx);
+          const labelRows = await tx
+            .select({ tier: labels.proofRequirementTier })
+            .from(labels)
+            .where(inArray(labels.id, inputLabelIds));
+          const maxTier = Math.max(0, ...labelRows.map((r) => r.tier ?? 0));
+          if (maxTier > 0) {
+            await tx
+              .update(issues)
+              .set({ proofRequirementTier: maxTier })
+              .where(eq(issues.id, issue.id));
+          }
         }
         const [enriched] = await withIssueLabels(tx, [issue]);
         return enriched;
@@ -959,6 +972,97 @@ export function issueService(db: Db) {
         await assertValidExecutionWorkspace(existing.companyId, nextProjectId, nextExecutionWorkspaceId);
       }
 
+      if (issueData.status === "done") {
+        const nextTier = patch.proofRequirementTier !== undefined ? patch.proofRequirementTier : existing.proofRequirementTier;
+        const nextPayload = patch.resolutionPayload !== undefined ? patch.resolutionPayload : (existing.resolutionPayload as Record<string, unknown> | null);
+        
+        if (nextTier && nextTier > 0) {
+          if (nextTier === 1) {
+            if (!nextPayload || nextPayload.exitCode !== 0) {
+              throw unprocessable(`Tier 1 proof required for ${existing.identifier}: resolution payload must include exitCode: 0`);
+            }
+          } else if (nextTier === 2) {
+            const approvalsRows = await db
+              .select({ type: approvals.id })
+              .from(issueApprovals)
+              .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
+              .where(
+                and(
+                  eq(issueApprovals.issueId, id),
+                  eq(approvals.status, "approved"),
+                  or(eq(approvals.type, "peer_review"), eq(approvals.type, "llm_judge")),
+                ),
+              );
+            if (approvalsRows.length === 0) {
+              throw unprocessable(`Tier 2 proof required for ${existing.identifier}: linked 'peer_review' or 'llm_judge' approval not found`);
+            }
+          } else if (nextTier === 3) {
+            const approvalsRows = await db
+              .select({ id: approvals.id })
+              .from(issueApprovals)
+              .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
+              .where(
+                and(
+                  eq(issueApprovals.issueId, id),
+                  eq(approvals.status, "approved"),
+                  isNotNull(approvals.decidedByUserId),
+                ),
+              );
+            if (approvalsRows.length === 0) {
+              throw unprocessable(`Tier 3 proof required for ${existing.identifier}: linked human approval not found`);
+            }
+          }
+        }
+      }
+
+      if (issueData.status === "in_review") {
+        patch.reviewIterationCount = (existing.reviewIterationCount ?? 0) + 1;
+        if (patch.reviewIterationCount > 2) {
+          // Escalation to CEO/Lead
+          const ceoAgent = await db
+            .select({ id: agents.id })
+            .from(agents)
+            .where(and(eq(agents.companyId, existing.companyId), eq(agents.role, "ceo")))
+            .then((rows) => rows[0] ?? null);
+          
+          if (ceoAgent) {
+            patch.assigneeAgentId = ceoAgent.id;
+            patch.assigneeUserId = null;
+            // Add comment about escalation
+            // (Comment handled by route or here? Route usually handles it via patch.comment)
+          }
+        } else {
+          // Assign a reviewer agent
+          // For now, assign to a random agent that is not the maker and not the CEO
+          const candidateReviewers = await db
+            .select({ id: agents.id })
+            .from(agents)
+            .where(
+              and(
+                eq(agents.companyId, existing.companyId),
+                ne(agents.id, existing.assigneeAgentId ?? ""),
+                ne(agents.role, "ceo"),
+                eq(agents.status, "idle")
+              )
+            )
+            .limit(5);
+          
+          if (candidateReviewers.length > 0) {
+            const reviewer = candidateReviewers[Math.floor(Math.random() * candidateReviewers.length)];
+            patch.assigneeAgentId = reviewer.id;
+            patch.assigneeUserId = null;
+            
+            // Set special instructions for reviewer? 
+            // We can use assigneeAdapterOverrides
+            patch.assigneeAdapterOverrides = {
+              ...(existing.assigneeAdapterOverrides as Record<string, unknown> | null),
+              reviewMode: true,
+              systemPromptSuffix: "You are now acting as a REVIEWER. Your goal is to be a devil's advocate and find flaws in the proposed solution. If you find issues, comment and set status back to todo. If it's perfect, set status to done (if tier allows) or approve the linked approval."
+            } as any;
+          }
+        }
+      }
+
       applyStatusSideEffects(issueData.status, patch);
       if (issueData.status && issueData.status !== "done") {
         patch.completedAt = null;
@@ -1004,6 +1108,17 @@ export function issueService(db: Db) {
         if (!updated) return null;
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.companyId, nextLabelIds, tx);
+          const labelRows = await tx
+            .select({ tier: labels.proofRequirementTier })
+            .from(labels)
+            .where(inArray(labels.id, nextLabelIds));
+          const maxTier = Math.max(0, ...labelRows.map((r) => r.tier ?? 0));
+          if (maxTier !== updated.proofRequirementTier) {
+            await tx
+              .update(issues)
+              .set({ proofRequirementTier: maxTier })
+              .where(eq(issues.id, updated.id));
+          }
         }
         const [enriched] = await withIssueLabels(tx, [updated]);
         return enriched;

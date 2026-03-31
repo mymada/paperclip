@@ -301,6 +301,7 @@ export type {
   RoutineRunSummary,
   RoutineExecutionIssueOrigin,
   RoutineListItem,
+  CompanyLesson,
   JsonSchema,
   PluginJobDeclaration,
   PluginWebhookDeclaration,

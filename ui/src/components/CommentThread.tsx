@@ -15,6 +15,8 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
   runAgentId?: string | null;
+  queueState?: "queued" | null;
+  queueTargetRunId?: string | null;
 }
 
 interface LinkedRunItem {
@@ -32,11 +34,14 @@ interface CommentReassignment {
 
 interface CommentThreadProps {
   comments: CommentWithRunMeta[];
+  queuedComments?: CommentWithRunMeta[];
   linkedRuns?: LinkedRunItem[];
   companyId?: string | null;
   projectId?: string | null;
   onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
   onEdit?: (commentId: string, body: string) => Promise<void>;
+  onInterruptQueued?: (runId: string) => Promise<void>;
+  interruptingQueuedRunId?: string | null;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   imageUploadHandler?: (file: File) => Promise<string>;
@@ -126,6 +131,8 @@ const TimelineList = memo(function TimelineList({
   projectId,
   highlightCommentId,
   onEdit,
+  onInterruptQueued,
+  interruptingQueuedRunId,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -133,6 +140,8 @@ const TimelineList = memo(function TimelineList({
   projectId?: string | null;
   highlightCommentId?: string | null;
   onEdit?: (commentId: string, body: string) => Promise<void>;
+  onInterruptQueued?: (runId: string) => Promise<void>;
+  interruptingQueuedRunId?: string | null;
 }) {
   const [editState, setEditState] = useState<{ id: string; body: string; saving: boolean } | null>(null);
   if (timeline.length === 0) {
@@ -175,23 +184,34 @@ const TimelineList = memo(function TimelineList({
         const isHighlighted = highlightCommentId === comment.id;
         const isUserComment = !comment.authorAgentId;
         const isEditing = editState?.id === comment.id;
+        const isQueued = comment.queueState === "queued";
+        const canInterrupt = isQueued && comment.queueTargetRunId && onInterruptQueued;
+        const isInterrupting = isQueued && comment.queueTargetRunId === interruptingQueuedRunId;
+
         return (
           <div
             key={comment.id}
             id={`comment-${comment.id}`}
-            className={`border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${isHighlighted ? "border-primary/50 bg-primary/5" : "border-border"}`}
+            className={`border p-3 overflow-hidden min-w-0 rounded-sm transition-colors duration-1000 ${isHighlighted ? "border-primary/50 bg-primary/5" : "border-border"} ${isQueued ? "opacity-60 bg-accent/10 border-dashed" : ""}`}
           >
             <div className="flex items-center justify-between mb-1">
-              {comment.authorAgentId ? (
-                <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-                  <Identity
-                    name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
-                    size="sm"
-                  />
-                </Link>
-              ) : (
-                <Identity name="You" size="sm" />
-              )}
+              <div className="flex items-center gap-2">
+                {comment.authorAgentId ? (
+                  <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
+                    <Identity
+                      name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
+                      size="sm"
+                    />
+                  </Link>
+                ) : (
+                  <Identity name="You" size="sm" />
+                )}
+                {isQueued && (
+                  <span className="text-[10px] font-medium bg-accent/50 text-accent-foreground px-1.5 py-0.5 rounded uppercase tracking-wider">
+                    Queued
+                  </span>
+                )}
+              </div>
               <span className="flex items-center gap-1.5">
                 {companyId ? (
                   <PluginSlotOutlet
@@ -215,7 +235,7 @@ const TimelineList = memo(function TimelineList({
                 >
                   {formatDateTime(comment.createdAt)}
                 </a>
-                {isUserComment && onEdit && !isEditing && (
+                {isUserComment && onEdit && !isEditing && !isQueued && (
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-foreground transition-colors"
@@ -228,6 +248,17 @@ const TimelineList = memo(function TimelineList({
                   </button>
                 )}
                 <CopyMarkdownButton text={comment.body} />
+                {canInterrupt && (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Cancel queued action"
+                    disabled={isInterrupting}
+                    onClick={() => onInterruptQueued(comment.queueTargetRunId!)}
+                  >
+                    <X className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                )}
               </span>
             </div>
             {isEditing ? (
@@ -294,11 +325,14 @@ const TimelineList = memo(function TimelineList({
 
 export function CommentThread({
   comments,
+  queuedComments = [],
   linkedRuns = [],
   companyId,
   projectId,
   onAdd,
   onEdit,
+  onInterruptQueued,
+  interruptingQueuedRunId,
   issueStatus,
   agentMap,
   imageUploadHandler,
@@ -325,7 +359,7 @@ export function CommentThread({
   const hasScrolledRef = useRef(false);
 
   const timeline = useMemo<TimelineItem[]>(() => {
-    const commentItems: TimelineItem[] = comments.map((comment) => ({
+    const commentItems: TimelineItem[] = [...comments, ...queuedComments].map((comment) => ({
       kind: "comment",
       id: comment.id,
       createdAtMs: new Date(comment.createdAt).getTime(),
@@ -342,7 +376,7 @@ export function CommentThread({
       if (a.kind === b.kind) return a.id.localeCompare(b.id);
       return a.kind === "comment" ? -1 : 1;
     });
-  }, [comments, linkedRuns]);
+  }, [comments, queuedComments, linkedRuns]);
 
   // Build mention options from agent map (exclude terminated agents)
   const mentions = useMemo<MentionOption[]>(() => {
@@ -450,6 +484,8 @@ export function CommentThread({
         projectId={projectId}
         highlightCommentId={highlightCommentId}
         onEdit={onEdit}
+        onInterruptQueued={onInterruptQueued}
+        interruptingQueuedRunId={interruptingQueuedRunId}
       />
 
       {liveRunSlot}

@@ -22,6 +22,7 @@ export const agents = pgTable(
     status: text("status").notNull().default("idle"),
     rolePrompt: text("role_prompt"),
     reportsTo: uuid("reports_to").references((): AnyPgColumn => agents.id),
+    scopes: text("scopes").array(),
     capabilities: text("capabilities"),
     adapterType: text("adapter_type").notNull().default("process"),
     adapterConfig: jsonb("adapter_config").$type<Record<string, unknown>>().notNull().default({}),

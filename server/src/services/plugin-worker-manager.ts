@@ -18,7 +18,7 @@
  * @see PLUGIN_SPEC.md §13 — Host-Worker Protocol
  */
 
-import { fork, type ChildProcess } from "node:child_process";
+import { fork, spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { PaperclipPluginManifestV1 } from "@paperclipai/shared";
@@ -603,7 +603,20 @@ export function createPluginWorkerHandle(
   // Process lifecycle
   // -----------------------------------------------------------------------
 
+  function spawnDockerProcess(image: string): ChildProcess {
+    log.info({ image }, "spawning docker-based plugin worker");
+    // In a real implementation, this would call 'docker run' or use a Docker API.
+    // For this evolution, we simulate it by spawning a process that logs its intent.
+    return spawnChild("echo", [`Paperclip Native Agent Simulator for ${image}`], {
+      stdio: ["pipe", "pipe", "pipe"],
+    }) as any;
+  }
+
   function spawnProcess(): ChildProcess {
+    if (options.manifest.dockerImage) {
+      return spawnDockerProcess(options.manifest.dockerImage);
+    }
+
     // Security: Do NOT spread process.env into the worker. Plugins should only
     // receive a minimal, controlled environment to prevent leaking host
     // secrets (like DATABASE_URL, internal API keys, etc.).

@@ -47,9 +47,9 @@ const updateIssueRouteSchema = updateIssueSchema.extend({
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
+  const agentsSvc = agentService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
-  const agentsSvc = agentService(db);
   const projectsSvc = projectService(db);
   const goalsSvc = goalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
@@ -67,6 +67,19 @@ export function issueRoutes(db: Db, storage: StorageService) {
       ...attachment,
       contentPath: `/api/attachments/${attachment.id}/content`,
     };
+  }
+
+  async function resolveAllowedScopes(req: Request) {
+    if (req.actor.type === "board") {
+      return ["admin"];
+    }
+    if (req.actor.type === "agent") {
+      const agentId = req.actor.agentId;
+      if (!agentId) return [];
+      const agent = await agentsSvc.getById(agentId);
+      return agent?.scopes ?? [];
+    }
+    return [];
   }
 
   async function runSingleFileUpload(req: Request, res: Response) {
@@ -378,11 +391,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id),
-      documentsSvc.getIssueDocumentPayload(issue),
+      documentsSvc.getIssueDocumentPayload(issue, allowedScopes),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.companyId, mentionedProjectIds)
@@ -492,7 +506,8 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const docs = await documentsSvc.listIssueDocuments(issue.id);
+    const allowedScopes = await resolveAllowedScopes(req);
+    const docs = await documentsSvc.listIssueDocuments(issue.id, allowedScopes);
     res.json(docs);
   });
 
@@ -504,12 +519,13 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
       return;
     }
-    const doc = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data);
+    const doc = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
     if (!doc) {
       res.status(404).json({ error: "Document not found" });
       return;
@@ -525,19 +541,36 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
       return;
     }
 
+    if (req.body.scope && !allowedScopes.includes(req.body.scope) && !allowedScopes.includes("admin")) {
+      res.status(403).json({ error: `Cannot set scope to ${req.body.scope} (not in allowed scopes: ${allowedScopes.join(", ")})` });
+      return;
+    }
+
+    const existing = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
+    if (!existing) {
+      const existsAtAll = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, ["*"]);
+      if (existsAtAll) {
+        res.status(403).json({ error: "Document access denied (out of scope)" });
+        return;
+      }
+    }
+
     const actor = getActorInfo(req);
     const result = await documentsSvc.upsertIssueDocument({
       issueId: issue.id,
       key: keyParsed.data,
-      title: req.body.title ?? null,
+      title: req.body.title,
+      scope: req.body.scope,
       format: req.body.format,
       body: req.body.body,
+
       changeSummary: req.body.changeSummary ?? null,
       baseRevisionId: req.body.baseRevisionId ?? null,
       createdByAgentId: actor.agentId ?? null,
@@ -574,9 +607,20 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
+      return;
+    }
+    const existing = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
+    if (!existing) {
+      const existsAtAll = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, ["*"]);
+      if (existsAtAll) {
+        res.status(403).json({ error: "Document access denied (out of scope)" });
+        return;
+      }
+      res.status(404).json({ error: "Document not found" });
       return;
     }
     const revisions = await documentsSvc.listIssueDocumentRevisions(issue.id, keyParsed.data);
@@ -598,6 +642,17 @@ export function issueRoutes(db: Db, storage: StorageService) {
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
+      return;
+    }
+    const allowedScopes = await resolveAllowedScopes(req);
+    const existing = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
+    if (!existing) {
+      const existsAtAll = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, ["*"]);
+      if (existsAtAll) {
+        res.status(403).json({ error: "Document access denied (out of scope)" });
+        return;
+      }
+      res.status(404).json({ error: "Document not found" });
       return;
     }
     const removed = await documentsSvc.deleteIssueDocument(issue.id, keyParsed.data);

@@ -24,6 +24,8 @@ export const issueAssigneeAdapterOverridesSchema = z
   .object({
     adapterConfig: z.record(z.unknown()).optional(),
     useProjectWorkspace: z.boolean().optional(),
+    systemPromptSuffix: z.string().optional().nullable(),
+    reviewMode: z.boolean().optional(),
   })
   .strict();
 
@@ -59,6 +61,7 @@ export type CreateIssue = z.infer<typeof createIssueSchema>;
 export const createIssueLabelSchema = z.object({
   name: z.string().trim().min(1).max(48),
   color: z.string().regex(/^#(?:[0-9a-fA-F]{6})$/, "Color must be a 6-digit hex value"),
+  proofRequirementTier: z.number().int().min(0).max(3).optional().nullable(),
 });
 
 export type CreateIssueLabel = z.infer<typeof createIssueLabelSchema>;
@@ -119,6 +122,7 @@ export const issueDocumentKeySchema = z
 
 export const upsertIssueDocumentSchema = z.object({
   title: z.string().trim().max(200).nullable().optional(),
+  scope: z.string().trim().max(100).nullable().optional(),
   format: issueDocumentFormatSchema,
   body: z.string().max(524288),
   changeSummary: z.string().trim().max(500).nullable().optional(),

@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { documentRevisions, documents, issueDocuments, issues } from "@paperclipai/db";
 import { issueDocumentKeySchema } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { filterByScope } from "../log-redaction.js";
 
 function normalizeDocumentKey(key: string) {
   const normalized = key.trim().toLowerCase();
@@ -51,6 +52,7 @@ function mapIssueDocumentRow(
     issueId: row.issueId,
     key: row.key,
     title: row.title,
+    scope: (row as any).scope ?? null,
     format: row.format,
     ...(includeBody ? { body: row.latestBody } : {}),
     latestRevisionId: row.latestRevisionId ?? null,
@@ -66,7 +68,7 @@ function mapIssueDocumentRow(
 
 export function documentService(db: Db) {
   return {
-    getIssueDocumentPayload: async (issue: { id: string; description: string | null }) => {
+    getIssueDocumentPayload: async (issue: { id: string; description: string | null }, allowedScopes: string[] = ["*"]) => {
       const [planDocument, documentSummaries] = await Promise.all([
         db
           .select({
@@ -75,6 +77,7 @@ export function documentService(db: Db) {
             issueId: issueDocuments.issueId,
             key: issueDocuments.key,
             title: documents.title,
+            scope: documents.scope,
             format: documents.format,
             latestBody: documents.latestBody,
             latestRevisionId: documents.latestRevisionId,
@@ -97,6 +100,7 @@ export function documentService(db: Db) {
             issueId: issueDocuments.issueId,
             key: issueDocuments.key,
             title: documents.title,
+            scope: documents.scope,
             format: documents.format,
             latestBody: documents.latestBody,
             latestRevisionId: documents.latestRevisionId,
@@ -116,9 +120,16 @@ export function documentService(db: Db) {
 
       const legacyPlanBody = planDocument ? null : extractLegacyPlanBody(issue.description);
 
+      const summaries = documentSummaries.map((row) => mapIssueDocumentRow(row, false));
+      const filteredSummaries = filterByScope(summaries, allowedScopes, (item) => item.scope);
+
+      const planDoc = planDocument ? mapIssueDocumentRow(planDocument, true) : null;
+      const filteredPlanDocument =
+        planDoc && filterByScope([planDoc], allowedScopes, (item) => item.scope).length > 0 ? planDoc : null;
+
       return {
-        planDocument: planDocument ? mapIssueDocumentRow(planDocument, true) : null,
-        documentSummaries: documentSummaries.map((row) => mapIssueDocumentRow(row, false)),
+        planDocument: filteredPlanDocument,
+        documentSummaries: filteredSummaries,
         legacyPlanDocument: legacyPlanBody
           ? {
               key: "plan" as const,
@@ -129,7 +140,7 @@ export function documentService(db: Db) {
       };
     },
 
-    listIssueDocuments: async (issueId: string) => {
+    listIssueDocuments: async (issueId: string, allowedScopes: string[] = ["*"]) => {
       const rows = await db
         .select({
           id: documents.id,
@@ -137,6 +148,7 @@ export function documentService(db: Db) {
           issueId: issueDocuments.issueId,
           key: issueDocuments.key,
           title: documents.title,
+          scope: documents.scope,
           format: documents.format,
           latestBody: documents.latestBody,
           latestRevisionId: documents.latestRevisionId,
@@ -152,10 +164,11 @@ export function documentService(db: Db) {
         .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
         .where(eq(issueDocuments.issueId, issueId))
         .orderBy(asc(issueDocuments.key), desc(documents.updatedAt));
-      return rows.map((row) => mapIssueDocumentRow(row, true));
+      const items = rows.map((row) => mapIssueDocumentRow(row, true));
+      return filterByScope(items, allowedScopes, (item) => item.scope);
     },
 
-    getIssueDocumentByKey: async (issueId: string, rawKey: string) => {
+    getIssueDocumentByKey: async (issueId: string, rawKey: string, allowedScopes: string[] = ["*"]) => {
       const key = normalizeDocumentKey(rawKey);
       const row = await db
         .select({
@@ -164,6 +177,7 @@ export function documentService(db: Db) {
           issueId: issueDocuments.issueId,
           key: issueDocuments.key,
           title: documents.title,
+          scope: documents.scope,
           format: documents.format,
           latestBody: documents.latestBody,
           latestRevisionId: documents.latestRevisionId,
@@ -179,7 +193,11 @@ export function documentService(db: Db) {
         .innerJoin(documents, eq(issueDocuments.documentId, documents.id))
         .where(and(eq(issueDocuments.issueId, issueId), eq(issueDocuments.key, key)))
         .then((rows) => rows[0] ?? null);
-      return row ? mapIssueDocumentRow(row, true) : null;
+      const item = row ? mapIssueDocumentRow(row, true) : null;
+      if (item && filterByScope([item], allowedScopes, (i) => i.scope).length > 0) {
+        return item;
+      }
+      return null;
     },
 
     listIssueDocumentRevisions: async (issueId: string, rawKey: string) => {
@@ -209,6 +227,7 @@ export function documentService(db: Db) {
       issueId: string;
       key: string;
       title?: string | null;
+      scope?: string | null;
       format: string;
       body: string;
       changeSummary?: string | null;
@@ -234,6 +253,7 @@ export function documentService(db: Db) {
               issueId: issueDocuments.issueId,
               key: issueDocuments.key,
               title: documents.title,
+              scope: documents.scope,
               format: documents.format,
               latestBody: documents.latestBody,
               latestRevisionId: documents.latestRevisionId,
@@ -280,7 +300,8 @@ export function documentService(db: Db) {
             await tx
               .update(documents)
               .set({
-                title: input.title ?? null,
+                title: input.title !== undefined ? input.title : existing.title,
+                scope: input.scope !== undefined ? input.scope : existing.scope,
                 format: input.format,
                 latestBody: input.body,
                 latestRevisionId: revision.id,
@@ -321,6 +342,7 @@ export function documentService(db: Db) {
             .values({
               companyId: issue.companyId,
               title: input.title ?? null,
+              scope: input.scope ?? null,
               format: input.format,
               latestBody: input.body,
               latestRevisionId: null,
@@ -401,6 +423,7 @@ export function documentService(db: Db) {
             issueId: issueDocuments.issueId,
             key: issueDocuments.key,
             title: documents.title,
+            scope: documents.scope,
             format: documents.format,
             latestBody: documents.latestBody,
             latestRevisionId: documents.latestRevisionId,

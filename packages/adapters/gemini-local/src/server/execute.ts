@@ -296,6 +296,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     context,
   };
   const renderedPrompt = renderTemplate(promptTemplate, templateData);
+  const systemPromptSuffix = asString(context.paperclipSystemPromptSuffix, "").trim();
   const renderedBootstrapPrompt =
     !sessionId && bootstrapPromptTemplate.trim().length > 0
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
@@ -303,19 +304,29 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const paperclipEnvNote = renderPaperclipEnvNote(env);
   const apiAccessNote = renderApiAccessNote(env);
+
+  const lessons = Array.isArray(context.paperclipLessons) ? context.paperclipLessons : [];
+  const renderedLessons =
+    lessons.length > 0
+      ? `IMPORTANT LESSONS FROM PREVIOUS FAILURES:\n${lessons.map((l) => `- ${l}`).join("\n")}`
+      : "";
+
   const prompt = joinPromptSections([
     instructionsPrefix,
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    renderedLessons,
     paperclipEnvNote,
     apiAccessNote,
     renderedPrompt,
+    systemPromptSuffix,
   ]);
   const promptMetrics = {
     promptChars: prompt.length,
     instructionsChars: instructionsPrefix.length,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
+    lessonsChars: renderedLessons.length,
     runtimeNoteChars: paperclipEnvNote.length + apiAccessNote.length,
     heartbeatPromptChars: renderedPrompt.length,
   };

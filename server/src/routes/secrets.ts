@@ -45,6 +45,7 @@ export function secretRoutes(db: Db) {
       companyId,
       {
         name: req.body.name,
+        scope: req.body.scope,
         provider: req.body.provider ?? defaultProvider,
         value: req.body.value,
         description: req.body.description,
@@ -110,6 +111,7 @@ export function secretRoutes(db: Db) {
 
     const updated = await svc.update(id, {
       name: req.body.name,
+      scope: req.body.scope,
       description: req.body.description,
       externalRef: req.body.externalRef,
     });

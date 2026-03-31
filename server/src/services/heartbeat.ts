@@ -28,6 +28,8 @@ import { parseObject, asBoolean, asNumber, appendWithCap, MAX_EXCERPT_BYTES } fr
 import { costService } from "./costs.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
+import { companyLessonService } from "./company-lessons.js";
+import { retrospectiveService } from "./retrospective.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
@@ -285,6 +287,8 @@ type SessionCompactionDecision = {
 interface ParsedIssueAssigneeAdapterOverrides {
   adapterConfig: Record<string, unknown> | null;
   useProjectWorkspace: boolean | null;
+  systemPromptSuffix: string | null;
+  reviewMode: boolean | null;
 }
 
 export type ResolvedWorkspaceForRun = {
@@ -573,10 +577,16 @@ function parseIssueAssigneeAdapterOverrides(
     typeof parsed.useProjectWorkspace === "boolean"
       ? parsed.useProjectWorkspace
       : null;
-  if (!adapterConfig && useProjectWorkspace === null) return null;
+  const systemPromptSuffix =
+    typeof parsed.systemPromptSuffix === "string" ? parsed.systemPromptSuffix : null;
+  const reviewMode = typeof parsed.reviewMode === "boolean" ? parsed.reviewMode : null;
+
+  if (!adapterConfig && useProjectWorkspace === null && !systemPromptSuffix && reviewMode === null) return null;
   return {
     adapterConfig,
     useProjectWorkspace,
+    systemPromptSuffix,
+    reviewMode,
   };
 }
 
@@ -2130,12 +2140,16 @@ export function heartbeatService(db: Db) {
     const { config: resolvedConfig, secretKeys } = await secretsSvc.resolveAdapterConfigForRuntime(
       agent.companyId,
       executionRunConfig,
+      agent.scopes ?? [],
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
     const runtimeConfig = {
       ...resolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
     };
+    if (issueAssigneeOverrides?.systemPromptSuffix) {
+      (context as any).paperclipSystemPromptSuffix = issueAssigneeOverrides.systemPromptSuffix;
+    }
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
       companyId: agent.companyId,
       heartbeatRunId: run.id,
@@ -2595,6 +2609,17 @@ export function heartbeatService(db: Db) {
         context.paperclipHierarchicalInstructions = hierarchicalInstructions;
       }
 
+      if (issueId) {
+        try {
+          const lessons = await companyLessonService(db).findRelevant(agent.companyId, issueContext?.title ?? "");
+          if (lessons.length > 0) {
+            context.paperclipLessons = lessons.map((l) => l.rule);
+          }
+        } catch (err) {
+          logger.warn({ issueId, err }, "failed to fetch relevant lessons");
+        }
+      }
+
       const adapterResult = await adapter.execute({
         runId: run.id,
         agent,
@@ -2748,10 +2773,19 @@ export function heartbeatService(db: Db) {
         sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
         stdoutExcerpt,
         stderrExcerpt,
-        logBytes: logSummary?.bytes,
-        logSha256: logSummary?.sha256,
+        logBytes: logSummary?.bytes ?? null,
+        logSha256: logSummary?.sha256 ?? null,
         logCompressed: logSummary?.compressed ?? false,
-      });
+        });
+
+        if (issueId && status === "failed") {
+        retrospectiveService(db)
+          .analyzeIssueFailures(issueId)
+          .catch((err) => {
+            logger.warn({ issueId, err }, "failed to trigger retrospective analysis");
+          });
+        }
+
 
       await setWakeupStatus(run.wakeupRequestId, outcome === "succeeded" ? "completed" : status, {
         finishedAt: new Date(),

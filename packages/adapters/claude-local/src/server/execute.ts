@@ -397,15 +397,23 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     context,
   };
   const renderedPrompt = renderTemplate(promptTemplate, templateData);
+  const systemPromptSuffix = asString(context.paperclipSystemPromptSuffix, "").trim();
   const renderedBootstrapPrompt =
     !sessionId && bootstrapPromptTemplate.trim().length > 0
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
+  const lessons = Array.isArray(context.paperclipLessons) ? context.paperclipLessons : [];
+  const renderedLessons =
+    lessons.length > 0
+      ? `IMPORTANT LESSONS FROM PREVIOUS FAILURES:\n${lessons.map((l) => `- ${l}`).join("\n")}`
+      : "";
   const prompt = joinPromptSections([
     renderedBootstrapPrompt,
     sessionHandoffNote,
+    renderedLessons,
     renderedPrompt,
+    systemPromptSuffix,
   ]);
   const promptMetrics = {
     promptChars: prompt.length,

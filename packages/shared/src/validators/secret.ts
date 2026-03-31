@@ -23,6 +23,7 @@ export const envConfigSchema = z.record(envBindingSchema);
 
 export const createSecretSchema = z.object({
   name: z.string().min(1),
+  scope: z.string().trim().max(100).nullable().optional(),
   provider: z.enum(SECRET_PROVIDERS).optional(),
   value: z.string().min(1),
   description: z.string().optional().nullable(),
@@ -40,6 +41,7 @@ export type RotateSecret = z.infer<typeof rotateSecretSchema>;
 
 export const updateSecretSchema = z.object({
   name: z.string().min(1).optional(),
+  scope: z.string().trim().max(100).nullable().optional(),
   description: z.string().optional().nullable(),
   externalRef: z.string().optional().nullable(),
 });

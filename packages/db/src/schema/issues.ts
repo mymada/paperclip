@@ -46,6 +46,9 @@ export const issues = pgTable(
     originRunId: text("origin_run_id"),
     requestDepth: integer("request_depth").notNull().default(0),
     billingCode: text("billing_code"),
+    proofRequirementTier: integer("proof_requirement_tier"),
+    reviewIterationCount: integer("review_iteration_count").notNull().default(0),
+    resolutionPayload: jsonb("resolution_payload").$type<Record<string, unknown>>(),
     assigneeAdapterOverrides: jsonb("assignee_adapter_overrides").$type<Record<string, unknown>>(),
     executionWorkspaceId: uuid("execution_workspace_id")
       .references((): AnyPgColumn => executionWorkspaces.id, { onDelete: "set null" }),

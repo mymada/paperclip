@@ -131,6 +131,7 @@ export function agentChatRoutes(db: Db) {
       const { config: resolvedConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
         agent.companyId,
         config,
+        agent.scopes ?? [],
       );
 
       // Get adapter

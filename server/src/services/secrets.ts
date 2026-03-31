@@ -3,7 +3,8 @@ import type { Db } from "@paperclipai/db";
 import { companySecrets, companySecretVersions } from "@paperclipai/db";
 import type { AgentEnvConfig, EnvBinding, SecretProvider } from "@paperclipai/shared";
 import { envBindingSchema } from "@paperclipai/shared";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { filterByScope } from "../log-redaction.js";
 import { getSecretProvider, listSecretProviders } from "../secrets/provider-registry.js";
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -79,8 +80,12 @@ export function secretService(db: Db) {
     companyId: string,
     secretId: string,
     version: number | "latest",
+    allowedScopes: string[] = ["*"],
   ): Promise<string> {
     const secret = await assertSecretInCompany(companyId, secretId);
+    if (filterByScope([secret], allowedScopes, (s) => s.scope).length === 0) {
+      throw forbidden(`Secret access denied (scope: ${secret.scope})`);
+    }
     const resolvedVersion = version === "latest" ? secret.latestVersion : version;
     const versionRow = await getSecretVersion(secret.id, resolvedVersion);
     if (!versionRow) throw notFound("Secret version not found");
@@ -150,12 +155,14 @@ export function secretService(db: Db) {
   return {
     listProviders: () => listSecretProviders(),
 
-    list: (companyId: string) =>
-      db
+    list: async (companyId: string, allowedScopes: string[] = ["*"]) => {
+      const rows = await db
         .select()
         .from(companySecrets)
         .where(eq(companySecrets.companyId, companyId))
-        .orderBy(desc(companySecrets.createdAt)),
+        .orderBy(desc(companySecrets.createdAt));
+      return filterByScope(rows, allowedScopes, (s) => s.scope);
+    },
 
     getById,
     getByName,
@@ -165,6 +172,7 @@ export function secretService(db: Db) {
       companyId: string,
       input: {
         name: string;
+        scope?: string | null;
         provider: SecretProvider;
         value: string;
         description?: string | null;
@@ -187,6 +195,7 @@ export function secretService(db: Db) {
           .values({
             companyId,
             name: input.name,
+            scope: input.scope ?? null,
             provider: input.provider,
             externalRef: prepared.externalRef,
             latestVersion: 1,
@@ -252,7 +261,7 @@ export function secretService(db: Db) {
 
     update: async (
       secretId: string,
-      patch: { name?: string; description?: string | null; externalRef?: string | null },
+      patch: { name?: string; scope?: string | null; description?: string | null; externalRef?: string | null },
     ) => {
       const secret = await getById(secretId);
       if (!secret) throw notFound("Secret not found");
@@ -268,6 +277,7 @@ export function secretService(db: Db) {
         .update(companySecrets)
         .set({
           name: patch.name ?? secret.name,
+          scope: patch.scope !== undefined ? patch.scope : secret.scope,
           description:
             patch.description === undefined ? secret.description : patch.description,
           externalRef:
@@ -309,7 +319,11 @@ export function secretService(db: Db) {
       return normalized;
     },
 
-    resolveEnvBindings: async (companyId: string, envValue: unknown): Promise<{ env: Record<string, string>; secretKeys: Set<string> }> => {
+    resolveEnvBindings: async (
+      companyId: string,
+      envValue: unknown,
+      allowedScopes: string[] = ["*"],
+    ): Promise<{ env: Record<string, string>; secretKeys: Set<string> }> => {
       const record = asRecord(envValue);
       if (!record) return { env: {} as Record<string, string>, secretKeys: new Set<string>() };
       const resolved: Record<string, string> = {};
@@ -327,14 +341,18 @@ export function secretService(db: Db) {
         if (binding.type === "plain") {
           resolved[key] = binding.value;
         } else {
-          resolved[key] = await resolveSecretValue(companyId, binding.secretId, binding.version);
+          resolved[key] = await resolveSecretValue(companyId, binding.secretId, binding.version, allowedScopes);
           secretKeys.add(key);
         }
       }
       return { env: resolved, secretKeys };
     },
 
-    resolveAdapterConfigForRuntime: async (companyId: string, adapterConfig: Record<string, unknown>): Promise<{ config: Record<string, unknown>; secretKeys: Set<string> }> => {
+    resolveAdapterConfigForRuntime: async (
+      companyId: string,
+      adapterConfig: Record<string, unknown>,
+      allowedScopes: string[] = ["*"],
+    ): Promise<{ config: Record<string, unknown>; secretKeys: Set<string> }> => {
       const resolved = { ...adapterConfig };
       const secretKeys = new Set<string>();
       if (!Object.prototype.hasOwnProperty.call(adapterConfig, "env")) {
@@ -358,7 +376,7 @@ export function secretService(db: Db) {
         if (binding.type === "plain") {
           env[key] = binding.value;
         } else {
-          env[key] = await resolveSecretValue(companyId, binding.secretId, binding.version);
+          env[key] = await resolveSecretValue(companyId, binding.secretId, binding.version, allowedScopes);
           secretKeys.add(key);
         }
       }

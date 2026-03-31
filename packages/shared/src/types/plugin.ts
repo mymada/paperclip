@@ -264,6 +264,8 @@ export interface PaperclipPluginManifestV1 {
     /** Path to the UI bundle directory (required when `ui.slots` is declared). */
     ui?: string;
   };
+  /** Docker image for native agent plugins ("Fast Hands"). */
+  dockerImage?: string;
   /** JSON Schema for operator-editable instance configuration. */
   instanceConfigSchema?: JsonSchema;
   /** Scheduled jobs this plugin declares. Requires `jobs.schedule` capability. */
