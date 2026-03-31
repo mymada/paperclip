@@ -67,6 +67,37 @@ export const STANDARD_LIBRARY_PLUGINS: StandardLibraryPlugin[] = [
         }
       ]
     }
+  },
+  {
+    id: "paperclip.swarm",
+    manifest: {
+      id: "paperclip.swarm",
+      apiVersion: 1,
+      version: "1.0.0",
+      displayName: "Swarm Manager",
+      description: "Spawn isolated worker agents in Git worktrees.",
+      author: "Paperclip Core Team",
+      categories: ["orchestration"],
+      capabilities: ["agent.tools.register"],
+      entrypoints: {
+        worker: "internal"
+      },
+      tools: [
+        {
+          name: "spawn_worker",
+          displayName: "Spawn Worker",
+          description: "Spawn a new worker agent in an isolated Git worktree to perform a sub-task.",
+          parametersSchema: {
+            type: "object",
+            properties: {
+              role: { type: "string", description: "The role of the worker (e.g. 'tester', 'debugger')" },
+              objective: { type: "string", description: "The specific task for the worker" }
+            },
+            required: ["role", "objective"]
+          }
+        }
+      ]
+    }
   }
 ];
 

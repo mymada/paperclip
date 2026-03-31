@@ -617,7 +617,7 @@ export function pluginRoutes(
 
     const pluginId = req.query.pluginId as string | undefined;
     const filter = pluginId ? { pluginId } : undefined;
-    const tools = toolDeps.toolDispatcher.listToolsForAgent(filter);
+    const tools = await toolDeps.toolDispatcher.listToolsForAgent(filter);
     res.json(tools);
   });
 

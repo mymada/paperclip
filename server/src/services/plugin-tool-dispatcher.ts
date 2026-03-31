@@ -38,6 +38,8 @@ import {
   type ToolExecutionResult,
 } from "./plugin-tool-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
+import { mcpBridgeService } from "./mcp-bridge.js";
+import { swarmManager } from "./swarm-manager.js";
 import { logger } from "../middleware/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -117,11 +119,10 @@ export interface PluginToolDispatcher {
    * @param filter - Optional filter criteria
    * @returns Array of agent tool descriptors
    */
-  listToolsForAgent(filter?: ToolListFilter): AgentToolDescriptor[];
+   listToolsForAgent(filter?: ToolListFilter): Promise<AgentToolDescriptor[]>;
 
-  /**
-   * Look up a tool by its namespaced name.
-   *
+   /**
+   * Look up a tool by its namespaced name.   *
    * @param namespacedName - e.g. `"acme.linear:search-issues"`
    * @returns The registered tool, or `null` if not found
    */
@@ -385,8 +386,24 @@ export function createPluginToolDispatcher(
       log.info("plugin tool dispatcher torn down");
     },
 
-    listToolsForAgent(filter?: ToolListFilter): AgentToolDescriptor[] {
-      return registry.listTools(filter).map(toAgentDescriptor);
+    async listToolsForAgent(filter?: ToolListFilter): Promise<AgentToolDescriptor[]> {
+      const pluginTools = registry.listTools(filter).map(toAgentDescriptor);
+      
+      // If we are filtering for a specific plugin, don't include MCP tools
+      if (filter?.pluginId) {
+        return pluginTools;
+      }
+
+      const mcpTools = await mcpBridgeService.listTools();
+      const mcpDescriptors: AgentToolDescriptor[] = mcpTools.map((mcp) => ({
+        name: mcp.namespacedName,
+        displayName: mcp.name,
+        description: mcp.description,
+        parametersSchema: mcp.parametersSchema,
+        pluginId: `mcp.${mcp.serverId}`,
+      }));
+
+      return [...pluginTools, ...mcpDescriptors];
     },
 
     getTool(namespacedName: string): RegisteredTool | null {
@@ -406,6 +423,36 @@ export function createPluginToolDispatcher(
         },
         "dispatching tool execution",
       );
+
+      if (namespacedName.startsWith("mcp.")) {
+        const mcpResult = await mcpBridgeService.executeTool(namespacedName, parameters as Record<string, unknown>);
+        const result: ToolExecutionResult = {
+          pluginId: namespacedName.split(":")[0],
+          toolName: namespacedName.split(":")[1],
+          result: {
+            content: JSON.stringify(mcpResult),
+          },
+        };
+        return result;
+      }
+
+      if (namespacedName === "paperclip.swarm:spawn_worker") {
+        const { role, objective } = parameters as { role: string; objective: string };
+        const swarmResult = await swarmManager.spawnWorker({
+          parentId: runContext.agentId ?? "unknown",
+          role,
+          objective,
+          baseCwd: process.cwd(), // Ideally should come from context
+        });
+
+        return {
+          pluginId: "paperclip.swarm",
+          toolName: "spawn_worker",
+          result: {
+            content: `Spawned worker ${swarmResult.workerId} in worktree ${swarmResult.worktreePath} on branch ${swarmResult.branchName}.`,
+          },
+        };
+      }
 
       const result = await registry.executeTool(
         namespacedName,

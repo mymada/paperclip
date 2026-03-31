@@ -579,9 +579,12 @@ export async function startServer(): Promise<StartedServer> {
     .catch((err) => {
       logger.error({ err }, "startup reconciliation of persisted runtime services failed");
     });
-  
-  if (config.heartbeatSchedulerEnabled) {
-    const heartbeat = heartbeatService(db as any);
+
+  void mcpBridgeService.initialize(db as any).catch((err) => {
+    logger.error({ err }, "mcpBridgeService failed to initialize");
+  });
+
+  if (config.heartbeatSchedulerEnabled) {    const heartbeat = heartbeatService(db as any);
     const routines = routineService(db as any);
   
     // Reap orphaned running runs at startup while in-memory execution state is empty,
