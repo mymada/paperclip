@@ -1,4 +1,4 @@
-import { and, eq, gte, lt, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, issues } from "@paperclipai/db";
 import { notFound } from "../errors.js";
@@ -16,12 +16,9 @@ export function dashboardService(db: Db) {
       const [
         companyRow,
         agentRows,
-        taskRows,
+        [issuesStats],
         pendingApprovals,
         [monthSpendRow],
-        criticalCount,
-        stalledCount,
-        doneThisWeekCount,
         budgetOverview,
       ] = await Promise.all([
         db.select().from(companies).where(eq(companies.id, companyId)).then((rows) => rows[0] ?? null),
@@ -29,10 +26,19 @@ export function dashboardService(db: Db) {
           .from(agents)
           .where(eq(agents.companyId, companyId))
           .groupBy(agents.status),
-        db.select({ status: issues.status, count: sql<number>`count(*)` })
+        // ⚡ Bolt: Combines 4 separate queries on `issues` into a single query using
+        // conditional aggregations, saving multiple database round trips.
+        db.select({
+          open: sql<number>`coalesce(sum(case when ${issues.status} not in ('done', 'cancelled') then 1 else 0 end), 0)::int`,
+          inProgress: sql<number>`coalesce(sum(case when ${issues.status} = 'in_progress' then 1 else 0 end), 0)::int`,
+          blocked: sql<number>`coalesce(sum(case when ${issues.status} = 'blocked' then 1 else 0 end), 0)::int`,
+          done: sql<number>`coalesce(sum(case when ${issues.status} = 'done' then 1 else 0 end), 0)::int`,
+          criticalCount: sql<number>`coalesce(sum(case when ${issues.priority} = 'critical' and ${issues.status} not in ('done', 'cancelled') then 1 else 0 end), 0)::int`,
+          stalledCount: sql<number>`coalesce(sum(case when ${issues.status} = 'in_progress' and ${issues.updatedAt} < ${staleThreshold} then 1 else 0 end), 0)::int`,
+          doneThisWeekCount: sql<number>`coalesce(sum(case when ${issues.status} = 'done' and ${issues.completedAt} >= ${weekStart} then 1 else 0 end), 0)::int`,
+        })
           .from(issues)
-          .where(eq(issues.companyId, companyId))
-          .groupBy(issues.status),
+          .where(eq(issues.companyId, companyId)),
         db.select({ count: sql<number>`count(*)` })
           .from(approvals)
           .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
@@ -40,30 +46,6 @@ export function dashboardService(db: Db) {
         db.select({ monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
           .from(costEvents)
           .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, monthStart))),
-        db.select({ count: sql<number>`count(*)` })
-          .from(issues)
-          .where(and(
-            eq(issues.companyId, companyId),
-            eq(issues.priority, "critical"),
-            notInArray(issues.status, ["done", "cancelled"]),
-          ))
-          .then((rows) => Number(rows[0]?.count ?? 0)),
-        db.select({ count: sql<number>`count(*)` })
-          .from(issues)
-          .where(and(
-            eq(issues.companyId, companyId),
-            eq(issues.status, "in_progress"),
-            lt(issues.updatedAt, staleThreshold),
-          ))
-          .then((rows) => Number(rows[0]?.count ?? 0)),
-        db.select({ count: sql<number>`count(*)` })
-          .from(issues)
-          .where(and(
-            eq(issues.companyId, companyId),
-            eq(issues.status, "done"),
-            gte(issues.completedAt, weekStart),
-          ))
-          .then((rows) => Number(rows[0]?.count ?? 0)),
         budgets.overview(companyId),
       ]);
 
@@ -83,18 +65,15 @@ export function dashboardService(db: Db) {
       }
 
       const taskCounts: Record<string, number> = {
-        open: 0,
-        inProgress: 0,
-        blocked: 0,
-        done: 0,
+        open: issuesStats?.open ?? 0,
+        inProgress: issuesStats?.inProgress ?? 0,
+        blocked: issuesStats?.blocked ?? 0,
+        done: issuesStats?.done ?? 0,
       };
-      for (const row of taskRows) {
-        const count = Number(row.count);
-        if (row.status === "in_progress") taskCounts.inProgress += count;
-        if (row.status === "blocked") taskCounts.blocked += count;
-        if (row.status === "done") taskCounts.done += count;
-        if (row.status !== "done" && row.status !== "cancelled") taskCounts.open += count;
-      }
+
+      const criticalCount = issuesStats?.criticalCount ?? 0;
+      const stalledCount = issuesStats?.stalledCount ?? 0;
+      const doneThisWeekCount = issuesStats?.doneThisWeekCount ?? 0;
 
       const monthSpendCents = Number(monthSpendRow?.monthSpend ?? 0);
       const utilization =
