@@ -625,6 +625,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     const revisions = await documentsSvc.listIssueDocumentRevisions(issue.id, keyParsed.data);
+
     res.json(revisions);
   });
 

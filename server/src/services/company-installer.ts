@@ -67,11 +67,9 @@ class CompanyInstallerImpl {
           files,
           rootPath: "",
         },
-        target: {
-          mode: options.targetMode ?? "new_company",
-          companyId: options.targetCompanyId,
-          newCompanyName: options.newCompanyName,
-        },
+        target: options.targetMode === "existing_company" && options.targetCompanyId
+          ? { mode: "existing_company" as const, companyId: options.targetCompanyId }
+          : { mode: "new_company" as const, newCompanyName: options.newCompanyName },
         selectedFiles: Object.keys(files),
         collisionStrategy: "rename",
         nameOverrides: {},
@@ -81,7 +79,7 @@ class CompanyInstallerImpl {
       
       return importResult;
     } catch (error) {
-      logger.error(`[company-installer] Failed to install company:`, error);
+      logger.error({ error }, "[company-installer] Failed to install company:");
       throw error;
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});

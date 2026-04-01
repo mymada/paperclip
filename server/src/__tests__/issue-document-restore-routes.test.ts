@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Router } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { issueRoutes } from "../routes/issues.js";
@@ -9,11 +9,13 @@ const companyId = "22222222-2222-4222-8222-222222222222";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
+  getByIdentifier: vi.fn(),
 }));
 
 const mockDocumentsService = vi.hoisted(() => ({
   listIssueDocumentRevisions: vi.fn(),
   restoreIssueDocumentRevision: vi.fn(),
+  getIssueDocumentByKey: vi.fn(),
 }));
 
 const mockAccessService = vi.hoisted(() => ({
@@ -61,7 +63,10 @@ function createApp() {
     next();
   });
   app.use("/api", issueRoutes({} as any, {} as any));
-  app.use(errorHandler);
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    console.error("TEST APP ERROR:", err);
+    res.status(err.status ?? 500).json({ error: err.message });
+  });
   return app;
 }
 
@@ -92,6 +97,14 @@ describe("issue document revision routes", () => {
         createdAt: new Date("2026-03-26T12:00:00.000Z"),
       },
     ]);
+    mockDocumentsService.getIssueDocumentByKey.mockResolvedValue({
+      id: "document-1",
+      companyId,
+      issueId,
+      key: "plan",
+      title: "Plan",
+      format: "markdown",
+    });
     mockDocumentsService.restoreIssueDocumentRevision.mockResolvedValue({
       restoredFromRevisionId: "revision-1",
       restoredFromRevisionNumber: 1,

@@ -3,7 +3,9 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 60_000 });
 import {
   activityLog,
   agents,
@@ -14,6 +16,7 @@ import {
   executionWorkspaces,
   instanceSettings,
   issueComments,
+  issueInboxArchives,
   issues,
   projectWorkspaces,
   projects,
@@ -24,6 +27,9 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { instanceSettingsService } from "../services/instance-settings.ts";
 import { issueService } from "../services/issues.ts";
+
+const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
+const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

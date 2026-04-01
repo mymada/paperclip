@@ -465,6 +465,35 @@ async function findAvailablePort(preferredPort: number, reserved = new Set<numbe
   return port;
 }
 
+function collectReservedWorktreePorts(homeDir: string): Set<number> {
+  const reserved = new Set<number>();
+  const instancesRoot = path.resolve(homeDir, "instances");
+  if (!existsSync(instancesRoot)) return reserved;
+
+  const instanceDirs = readdirSync(instancesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+
+  for (const instanceId of instanceDirs) {
+    const configPath = path.resolve(instancesRoot, instanceId, "config.json");
+    if (!existsSync(configPath)) continue;
+
+    try {
+      const config = JSON.parse(readFileSync(configPath, "utf8"));
+      if (typeof config.server?.port === "number") {
+        reserved.add(config.server.port);
+      }
+      if (typeof config.database?.embeddedPostgresPort === "number") {
+        reserved.add(config.database.embeddedPostgresPort);
+      }
+    } catch {
+      // skip malformed configs
+    }
+  }
+
+  return reserved;
+}
+
 function detectGitBranchName(cwd: string): string | null {
   try {
     const value = execFileSync("git", ["branch", "--show-current"], {
@@ -887,9 +916,10 @@ async function runWorktreeInit(opts: WorktreeInitOptions): Promise<void> {
   }
 
   const preferredServerPort = opts.serverPort ?? ((sourceConfig?.server.port ?? 3100) + 1);
-  const serverPort = await findAvailablePort(preferredServerPort);
+  const reservedPorts = collectReservedWorktreePorts(paths.homeDir);
+  const serverPort = await findAvailablePort(preferredServerPort, reservedPorts);
   const preferredDbPort = opts.dbPort ?? ((sourceConfig?.database.embeddedPostgresPort ?? 54329) + 1);
-  const databasePort = await findAvailablePort(preferredDbPort, new Set([serverPort]));
+  const databasePort = await findAvailablePort(preferredDbPort, new Set([...reservedPorts, serverPort]));
   const targetConfig = buildWorktreeConfig({
     sourceConfig,
     paths,

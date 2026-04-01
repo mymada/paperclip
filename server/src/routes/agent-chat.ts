@@ -13,9 +13,8 @@ import {
   issueService,
   documentService,
   secretService,
-  callLlm,
-  type LlmMessage,
 } from "../services/index.js";
+import { callLlm, type LlmMessage } from "../services/llm-client.js";
 import { notFound } from "../errors.js";
 import { parseObject } from "../adapters/utils.js";
 
@@ -635,9 +634,8 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
 
         // Save as comment
         const cleanedResponse = stripActionSignals(llmResponse).trim();
-        const targetIssueId = taskId || (typeof resolvedIssueId !== 'undefined' ? resolvedIssueId : "");
-        if (cleanedResponse && targetIssueId) {
-          await issueSvc.addComment(targetIssueId, cleanedResponse, {
+        if (cleanedResponse && taskId) {
+          await issueSvc.addComment(taskId, cleanedResponse, {
             userId: "board-concierge",
           });
         }
