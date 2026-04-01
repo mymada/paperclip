@@ -514,6 +514,7 @@ export function CommentThread({
               <Button
                 variant="ghost"
                 size="icon-sm"
+                aria-label="Attach file"
                 onClick={() => attachInputRef.current?.click()}
                 disabled={attaching}
                 title="Attach image"
