@@ -24,7 +24,6 @@ export function companyLessonService(db: Db) {
       issueId?: string | null;
       rule: string;
       status?: "draft" | "active" | "archived";
-      embedding?: number[];
     }) => {
       const [lesson] = await db
         .insert(companyLessons)
@@ -33,13 +32,12 @@ export function companyLessonService(db: Db) {
           issueId: input.issueId ?? null,
           rule: input.rule,
           status: input.status ?? "draft",
-          embedding: input.embedding ?? null,
         })
         .returning();
       return lesson;
     },
 
-    update: async (id: string, patch: { rule?: string; status?: "draft" | "active" | "archived"; embedding?: number[] }) => {
+    update: async (id: string, patch: { rule?: string; status?: "draft" | "active" | "archived" }) => {
       const [updated] = await db
         .update(companyLessons)
         .set({

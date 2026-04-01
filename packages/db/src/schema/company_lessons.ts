@@ -1,14 +1,6 @@
-import { pgTable, uuid, text, timestamp, index, customType } from "drizzle-orm/pg-core";
+import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { issues } from "./issues.js";
-
-// Custom type for pgvector
-const vector = customType<{ data: number[] }>({
-  dataType(config) {
-    const dimensions = (config as any)?.dimensions ?? 1536;
-    return `vector(${dimensions})`;
-  },
-});
 
 export const companyLessons = pgTable(
   "company_lessons",
@@ -18,7 +10,6 @@ export const companyLessons = pgTable(
     issueId: uuid("issue_id").references(() => issues.id, { onDelete: "set null" }),
     rule: text("rule").notNull(),
     status: text("status").notNull().default("draft"),
-    embedding: vector("embedding", { dimensions: 1536 } as any),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

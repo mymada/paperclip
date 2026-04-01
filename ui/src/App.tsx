@@ -35,6 +35,7 @@ import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
 import { DesignGuide } from "./pages/DesignGuide";
 import { InstanceSettings } from "./pages/InstanceSettings";
+import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceBackupSettings } from "./pages/InstanceBackupSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { PluginManager } from "./pages/PluginManager";
@@ -166,7 +167,7 @@ function boardRoutes() {
       <Route path="parcours" element={<Parcours />} />
       <Route path="routines" element={<Routines />} />
       <Route path="routines/:routineId" element={<RoutineDetail />} />
-      <Route path="skills" element={<CompanySkills />} />
+      <Route path="skills/*" element={<CompanySkills />} />
       <Route path="issues" element={<Issues />} />
       <Route path="issues/all" element={<Navigate to="/issues" replace />} />
       <Route path="issues/active" element={<Navigate to="/issues" replace />} />
@@ -338,6 +339,7 @@ export function App() {
           <Route path="instance" element={<Navigate to="/instance/settings/heartbeats" replace />} />
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<Navigate to="heartbeats" replace />} />
+            <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="backup" element={<InstanceBackupSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />

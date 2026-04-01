@@ -30,6 +30,7 @@ import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { companyLessonService } from "./company-lessons.js";
 import { retrospectiveService } from "./retrospective.js";
+import { agentInstructionsService } from "./agent-instructions.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
@@ -78,6 +79,8 @@ const SESSIONED_LOCAL_ADAPTERS = new Set([
   "opencode_local",
   "pi_local",
 ]);
+const warnedJwtAgents = new Set<string>();
+const infraFailureCounts = new Map<string, number>();
 
 export function applyPersistedExecutionWorkspaceConfig(input: {
   config: Record<string, unknown>;
@@ -2580,7 +2583,8 @@ export function heartbeatService(db: Db) {
       const authToken = adapter.supportsLocalAgentJwt
         ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
         : null;
-      if (adapter.supportsLocalAgentJwt && !authToken) {
+      if (adapter.supportsLocalAgentJwt && !authToken && !warnedJwtAgents.has(agent.id)) {
+        warnedJwtAgents.add(agent.id);
         logger.warn(
           {
             companyId: agent.companyId,
@@ -2779,11 +2783,11 @@ export function heartbeatService(db: Db) {
         });
 
         if (issueId && status === "failed") {
-        retrospectiveService(db)
-          .analyzeIssueFailures(issueId)
-          .catch((err) => {
-            logger.warn({ issueId, err }, "failed to trigger retrospective analysis");
-          });
+          void retrospectiveService(db)
+            .analyzeIssueFailures(issueId)
+            .catch((err) => {
+              logger.warn({ issueId, err }, "failed to trigger retrospective analysis");
+            });
         }
 
 
@@ -2848,9 +2852,39 @@ export function heartbeatService(db: Db) {
         }
       }
 
+      const resolvedErrorCode = (err as any).code === "instructions_file_not_found"
+        ? "instructions_file_not_found"
+        : "adapter_failed";
+
+      if (resolvedErrorCode === "instructions_file_not_found") {
+        try {
+          const instructionsSvc = agentInstructionsService();
+          await instructionsSvc.ensureManagedBundle(agent);
+          logger.warn({ agentId: agent.id }, "instructions bundle was missing; auto-repaired for next run");
+        } catch (repairErr) {
+          logger.error({ agentId: agent.id, repairErr }, "failed to auto-repair missing instructions bundle");
+        }
+        const newCount = (infraFailureCounts.get(agent.id) ?? 0) + 1;
+        infraFailureCounts.set(agent.id, newCount);
+        try {
+          await retrospectiveService(db).analyzeInfrastructureFailure({
+            companyId: agent.companyId,
+            agentId: agent.id,
+            agentName: agent.name,
+            errorCode: resolvedErrorCode,
+            errorMessage: message,
+            recurrenceCount: newCount,
+          });
+        } catch (alertErr) {
+          logger.warn({ agentId: agent.id, alertErr }, "failed to emit infrastructure alert");
+        }
+      } else {
+        infraFailureCounts.delete(agent.id);
+      }
+
       const failedRun = await setRunStatus(run.id, "failed", {
         error: message,
-        errorCode: "adapter_failed",
+        errorCode: resolvedErrorCode,
         finishedAt: new Date(),
         stdoutExcerpt,
         stderrExcerpt,
@@ -2902,9 +2936,12 @@ export function heartbeatService(db: Db) {
           // The inner catch did not fire, so we must record the failure here.
           const message = outerErr instanceof Error ? outerErr.message : "Unknown setup failure";
           logger.error({ err: outerErr, runId }, "heartbeat execution setup failed");
+          const outerResolvedErrorCode = (outerErr as any).code === "instructions_file_not_found"
+            ? "instructions_file_not_found"
+            : "adapter_failed";
           await setRunStatus(runId, "failed", {
             error: message,
-            errorCode: "adapter_failed",
+            errorCode: outerResolvedErrorCode,
             finishedAt: new Date(),
           }).catch(() => undefined);
           await setWakeupStatus(run.wakeupRequestId, "failed", {

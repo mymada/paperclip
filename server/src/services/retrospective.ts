@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { heartbeatRuns, issues, companyLessons } from "@paperclipai/db";
+import { heartbeatRuns, issues } from "@paperclipai/db";
 import { getRunLogStore } from "./run-log-store.js";
 import { callLlm } from "./llm-client.js";
 import { companyLessonService } from "./company-lessons.js";
@@ -81,6 +81,28 @@ Rule:`;
       } catch (err) {
         logger.error({ issueId, err }, "Retrospective agent: failed to generate rule");
       }
-    }
+    },
+
+    analyzeInfrastructureFailure: async (params: {
+      companyId: string;
+      agentId: string;
+      agentName: string;
+      errorCode: string;
+      errorMessage: string;
+      recurrenceCount: number;
+    }) => {
+      if (params.recurrenceCount < 3) return;
+
+      logger.warn(
+        { agentId: params.agentId, agentName: params.agentName, errorCode: params.errorCode, recurrenceCount: params.recurrenceCount },
+        "Infrastructure alert: recurring failure for agent",
+      );
+
+      await lessonSvc.create({
+        companyId: params.companyId,
+        rule: `Agent '${params.agentName}' failed ${params.recurrenceCount} times with error '${params.errorCode}': ${params.errorMessage}. Manual intervention required.`,
+        status: "draft",
+      });
+    },
   };
 }

@@ -50,6 +50,7 @@ async function resolvePaperclipSkillsDir(): Promise<string | null> {
  */
 async function buildSkillsDir(): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skills-"));
+  await fs.chmod(tmp, 0o755);
   const target = path.join(tmp, ".claude", "skills");
   await fs.mkdir(target, { recursive: true });
   const skillsDir = await resolvePaperclipSkillsDir();
@@ -366,10 +367,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // --append-system-prompt-file (Claude CLI forbids using both flags together).
   let effectiveInstructionsFilePath = instructionsFilePath;
   if (instructionsFilePath) {
-    const instructionsContent = await fs.readFile(instructionsFilePath, "utf-8");
+    let instructionsContent: string;
+    try {
+      instructionsContent = await fs.readFile(instructionsFilePath, "utf-8");
+    } catch (readErr: unknown) {
+      if ((readErr as NodeJS.ErrnoException).code === "ENOENT") {
+        const err = new Error(
+          `Instructions file not found: ${instructionsFilePath}`,
+        ) as Error & { code: string };
+        err.code = "instructions_file_not_found";
+        throw err;
+      }
+      throw readErr;
+    }
     const pathDirective = `\nThe above agent instructions were loaded from ${instructionsFilePath}. Resolve any relative file references from ${instructionsFileDir}.`;
     const combinedPath = path.join(skillsDir, "agent-instructions.md");
-    await fs.writeFile(combinedPath, instructionsContent + pathDirective, "utf-8");
+    await fs.writeFile(combinedPath, instructionsContent + pathDirective, { encoding: "utf-8", mode: 0o644 });
     effectiveInstructionsFilePath = combinedPath;
   }
 

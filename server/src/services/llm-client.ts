@@ -50,7 +50,7 @@ async function callOpenAi(messages: LlmMessage[], options: LlmCompletionOptions)
 }
 
 async function callAnthropic(messages: LlmMessage[], options: LlmCompletionOptions) {
-  const model = options.model || "claude-3-5-sonnet-latest";
+  const model = options.model || "claude-sonnet-4-6";
   const system = messages.find(m => m.role === "system")?.content;
   const userMessages = messages.filter(m => m.role !== "system");
 

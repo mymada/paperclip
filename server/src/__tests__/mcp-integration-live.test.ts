@@ -21,7 +21,7 @@ import { mcpBridgeService } from "../services/mcp-bridge.js";
 
 describe("Live MCP Integration", () => {
   const serverId = "test-live-server";
-  const serverPath = path.resolve(process.cwd(), "test-mcp-server.js");
+  const serverPath = path.resolve(import.meta.dirname, "../../test-mcp-server.js");
 
   afterAll(async () => {
     await mcpBridgeService.shutdown();

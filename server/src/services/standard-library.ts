@@ -77,7 +77,7 @@ export const STANDARD_LIBRARY_PLUGINS: StandardLibraryPlugin[] = [
       displayName: "Swarm Manager",
       description: "Spawn isolated worker agents in Git worktrees.",
       author: "Paperclip Core Team",
-      categories: ["orchestration"],
+      categories: ["automation"],
       capabilities: ["agent.tools.register"],
       entrypoints: {
         worker: "internal"
@@ -101,9 +101,3 @@ export const STANDARD_LIBRARY_PLUGINS: StandardLibraryPlugin[] = [
   }
 ];
 
-export function standardLibraryService() {
-  return {
-    list: () => STANDARD_LIBRARY_PLUGINS,
-    get: (id: string) => STANDARD_LIBRARY_PLUGINS.find(p => p.id === id) ?? null,
-  };
-}

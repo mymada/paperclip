@@ -61,7 +61,7 @@ class McpBridgeServiceImpl {
           env: server.env,
         });
       } catch (error) {
-        logger.error(`[mcp-bridge] Initial connection to MCP server "${server.id}" failed:`, error);
+        logger.error({ err: error }, `[mcp-bridge] Initial connection to MCP server "${server.id}" failed`);
       }
     }
     
@@ -79,15 +79,22 @@ class McpBridgeServiceImpl {
 
     logger.info(`[mcp-bridge] Connecting to MCP server "${config.name}" (${config.id})`);
 
+    const mergedEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) mergedEnv[k] = v;
+    }
+    for (const [k, v] of Object.entries(config.env ?? {})) {
+      mergedEnv[k] = v;
+    }
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args ?? [],
-      env: { ...process.env, ...(config.env ?? {}) },
+      env: mergedEnv,
     });
 
     const client = new Client(
       { name: "paperclip-host", version: "0.1.0" },
-      { capabilities: { tools: {} } }
+      { capabilities: {} }
     );
 
     try {
@@ -96,7 +103,7 @@ class McpBridgeServiceImpl {
       this.serverConfigs.set(config.id, config);
       logger.info(`[mcp-bridge] Connected to MCP server "${config.id}"`);
     } catch (error) {
-      logger.error(`[mcp-bridge] Failed to connect to MCP server "${config.id}":`, error);
+      logger.error({ err: error }, `[mcp-bridge] Failed to connect to MCP server "${config.id}"`);
       throw error;
     }
   }
@@ -119,7 +126,7 @@ class McpBridgeServiceImpl {
         }));
         allTools.push(...tools);
       } catch (error) {
-        logger.warn(`[mcp-bridge] Failed to list tools for MCP server "${serverId}":`, error);
+        logger.warn({ err: error }, `[mcp-bridge] Failed to list tools for MCP server "${serverId}"`);
       }
     }
 
@@ -156,7 +163,7 @@ class McpBridgeServiceImpl {
       });
       return result;
     } catch (error) {
-      logger.error(`[mcp-bridge] Error executing MCP tool "${namespacedName}":`, error);
+      logger.error({ err: error }, `[mcp-bridge] Error executing MCP tool "${namespacedName}"`);
       throw error;
     }
   }
@@ -166,7 +173,7 @@ class McpBridgeServiceImpl {
       try {
         await client.close();
       } catch (error) {
-        logger.warn(`[mcp-bridge] Error closing MCP client "${id}":`, error);
+        logger.warn({ err: error }, `[mcp-bridge] Error closing MCP client "${id}"`);
       }
     }
     this.clients.clear();

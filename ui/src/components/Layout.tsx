@@ -74,7 +74,11 @@ export function Layout() {
     return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix) ?? null;
   }, [companies, companyPrefix]);
   const hasUnknownCompanyPrefix =
-    Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
+    Boolean(companyPrefix) &&
+    !isInstanceSettingsRoute &&
+    !companiesLoading &&
+    companies.length > 0 &&
+    !matchedCompany;
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),

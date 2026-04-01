@@ -38,6 +38,8 @@ export function activityRoutes(db: Db) {
       agentId: req.query.agentId as string | undefined,
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
+      limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
+      offset: req.query.offset ? parseInt(req.query.offset as string, 10) : undefined,
     };
     const result = await svc.list(filters);
     res.json(result);

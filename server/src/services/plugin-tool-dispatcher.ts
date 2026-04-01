@@ -23,6 +23,8 @@
  */
 
 import type { Db } from "@paperclipai/db";
+import { executionWorkspaces } from "@paperclipai/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type {
   PaperclipPluginManifestV1,
   PluginRecord,
@@ -438,11 +440,30 @@ export function createPluginToolDispatcher(
 
       if (namespacedName === "paperclip.swarm:spawn_worker") {
         const { role, objective } = parameters as { role: string; objective: string };
+
+        let baseCwd = process.cwd();
+        if (db) {
+          const rows = await db
+            .select({ cwd: executionWorkspaces.cwd })
+            .from(executionWorkspaces)
+            .where(
+              and(
+                eq(executionWorkspaces.companyId, runContext.companyId),
+                eq(executionWorkspaces.projectId, runContext.projectId),
+                inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
+              ),
+            )
+            .orderBy(desc(executionWorkspaces.lastUsedAt))
+            .limit(1);
+          const cwd = rows[0]?.cwd;
+          if (cwd) baseCwd = cwd;
+        }
+
         const swarmResult = await swarmManager.spawnWorker({
           parentId: runContext.agentId ?? "unknown",
           role,
           objective,
-          baseCwd: process.cwd(), // Ideally should come from context
+          baseCwd,
         });
 
         return {

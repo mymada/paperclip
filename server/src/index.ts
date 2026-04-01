@@ -26,7 +26,7 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
-import { heartbeatService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
+import { heartbeatService, mcpBridgeService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
@@ -583,6 +583,12 @@ export async function startServer(): Promise<StartedServer> {
   void mcpBridgeService.initialize(db as any).catch((err) => {
     logger.error({ err }, "mcpBridgeService failed to initialize");
   });
+
+  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    logger.warn(
+      "No LLM API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY). Retrospective analysis will be unavailable.",
+    );
+  }
 
   if (config.heartbeatSchedulerEnabled) {    const heartbeat = heartbeatService(db as any);
     const routines = routineService(db as any);

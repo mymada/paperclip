@@ -111,7 +111,14 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       .from(agents)
       .where(eq(agents.id, scopeId))
       .then((rows) => rows[0] ?? null);
-    if (!row) throw notFound("Agent not found");
+    if (!row) {
+      return {
+        companyId: "unknown",
+        name: `Unknown Agent (${scopeId.slice(0, 8)})`,
+        paused: false,
+        pauseReason: null,
+      };
+    }
     return {
       companyId: row.companyId,
       name: row.name,
@@ -130,7 +137,14 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
     .from(projects)
     .where(eq(projects.id, scopeId))
     .then((rows) => rows[0] ?? null);
-  if (!row) throw notFound("Project not found");
+  if (!row) {
+    return {
+      companyId: "unknown",
+      name: `Unknown Project (${scopeId.slice(0, 8)})`,
+      paused: false,
+      pauseReason: null,
+    };
+  }
   return {
     companyId: row.companyId,
     name: row.name,

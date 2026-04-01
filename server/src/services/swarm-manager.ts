@@ -56,7 +56,7 @@ class SwarmManagerImpl {
         branchName,
       };
     } catch (error) {
-      logger.error(`[swarm-manager] Failed to spawn worker ${workerId}:`, error);
+      logger.error({ err: error }, `[swarm-manager] Failed to spawn worker ${workerId}`);
       throw new Error(`Failed to create isolated worker environment: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -83,7 +83,7 @@ class SwarmManagerImpl {
       
       logger.debug(`[swarm-manager] Cleanup complete for ${branchName}`);
     } catch (error) {
-      logger.warn(`[swarm-manager] Cleanup failed for ${worktreePath}:`, error);
+      logger.warn({ err: error }, `[swarm-manager] Cleanup failed for ${worktreePath}`);
     }
   }
 }

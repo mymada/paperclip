@@ -888,6 +888,18 @@ export function issueService(db: Db) {
           issueNumber,
           identifier,
         } as typeof issues.$inferInsert;
+
+        if (values.goalId != null) {
+          const goalExists = await tx
+            .select({ id: goals.id })
+            .from(goals)
+            .where(eq(goals.id, values.goalId))
+            .then((rows) => rows.length > 0);
+          if (!goalExists) {
+            throw unprocessable(`Goal ${values.goalId} does not exist`);
+          }
+        }
+
         if (values.status === "in_progress" && !values.startedAt) {
           values.startedAt = new Date();
         }
