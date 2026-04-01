@@ -6,6 +6,7 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { logger } from "../middleware/logger.js";
@@ -32,7 +33,7 @@ class SwarmManagerImpl {
    * [SOURCE: KERNEL Couche H - HIGH_VELOCITY]
    */
   async spawnWorker(config: SwarmWorkerConfig): Promise<SwarmWorkerResult> {
-    const workerId = `worker-${Math.random().toString(36).slice(2, 11)}`;
+    const workerId = `worker-${randomBytes(4).toString("hex")}`;
     const branchName = `pcp-swarm-${workerId}`;
     const worktreePath = path.join(config.baseCwd, ".paperclip", "swarm", workerId);
 
