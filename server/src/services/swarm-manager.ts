@@ -6,6 +6,7 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { logger } from "../middleware/logger.js";
@@ -35,7 +36,7 @@ class SwarmManagerImpl {
     // ⚡ Auto-healing: Clean up any orphaned worktrees in this repo before spawning
     await this.reapOrphanedWorktrees(config.baseCwd);
 
-    const workerId = `worker-${Math.random().toString(36).slice(2, 11)}`;
+    const workerId = `worker-${randomBytes(4).toString("hex")}`;
     const branchName = `pcp-swarm-${workerId}`;
     const worktreePath = path.join(config.baseCwd, ".paperclip", "swarm", workerId);
 
@@ -89,6 +90,7 @@ class SwarmManagerImpl {
       logger.warn({ err: error }, `[swarm-manager] Cleanup failed for ${worktreePath}`);
     }
   }
+
   /**
    * Cleans up all orphaned worktrees in a given base directory.
    * [SOURCE: KERNEL Couche S - SHADOW_FIXES]

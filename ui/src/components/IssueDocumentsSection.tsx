@@ -812,6 +812,7 @@ export function IssueDocumentsSection({
                   <Button
                     variant="ghost"
                     size="icon-xs"
+                    aria-label="Preview document"
                     className="text-muted-foreground transition-colors"
                     title="Aperçu plein écran"
                     onClick={() => setPreviewDocumentKey(doc.key)}
@@ -821,6 +822,7 @@ export function IssueDocumentsSection({
                   <Button
                     variant="ghost"
                     size="icon-xs"
+                    aria-label={copiedDocumentKey === doc.key ? "Copied" : "Copy document"}
                     className={cn(
                       "text-muted-foreground transition-colors",
                       copiedDocumentKey === doc.key && "text-foreground",
@@ -839,6 +841,7 @@ export function IssueDocumentsSection({
                       <Button
                         variant="ghost"
                         size="icon-xs"
+                        aria-label="Document actions"
                         className="text-muted-foreground"
                         title="Document actions"
                       >

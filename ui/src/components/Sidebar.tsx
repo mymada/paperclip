@@ -72,6 +72,7 @@ export function Sidebar() {
         <Button
           variant="ghost"
           size="icon-sm"
+          aria-label="Search"
           className="text-muted-foreground shrink-0"
           onClick={openSearch}
         >
