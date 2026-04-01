@@ -343,5 +343,91 @@ export function backupRoutes(opts: {
     res.json({ message: `Backup "${name}" deleted successfully.` });
   });
 
+  // DELETE /api/backup/bulk — supprime plusieurs backups en même temps
+  router.delete("/", async (req, res) => {
+    const { names } = req.body; // Expects JSON payload { "names": ["backup1", "backup2"] }
+
+    if (!Array.isArray(names) || names.length === 0) {
+      res.status(400).json({ error: "Invalid payload: expected an array of 'names'" });
+      return;
+    }
+
+    const backups = listFullBackups(opts.backupDir);
+    const results = {
+      deleted: [] as string[],
+      failed: [] as { name: string; reason: string }[],
+    };
+
+    for (const name of names) {
+      if (!/^[a-zA-Z0-9_.-]+$/.test(name)) {
+        results.failed.push({ name, reason: "Invalid name format" });
+        continue;
+      }
+
+      const entry = backups.find((b: any) => b.name === name);
+      if (!entry) {
+        results.failed.push({ name, reason: "Not found" });
+        continue;
+      }
+
+      try {
+        if (existsSync(entry.path)) {
+          await rm(entry.path, { recursive: true, force: true });
+        }
+        const archivePath = join(opts.backupDir, `${name}.tar.gz`);
+        if (existsSync(archivePath)) {
+          await unlink(archivePath);
+        }
+        results.deleted.push(name);
+      } catch (err) {
+        results.failed.push({ name, reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    res.json({
+      message: `Bulk deletion complete.`,
+      results,
+    });
+  });
+
+  // POST /api/backup/reap — nettoie les backups incomplets/orphelins (Reaper)
+  router.post("/reap", async (_req, res) => {
+    if (!existsSync(opts.backupDir)) {
+      res.json({ message: "No backup directory exists." });
+      return;
+    }
+
+    const files = readdirSync(opts.backupDir);
+    const reaped: string[] = [];
+
+    for (const file of files) {
+      // Les backups temporaires/échoués ont souvent un préfixe ou suffixe spécifique
+      // ex: .tmp, .in-progress, ou des dossiers vides sans manifest.json
+      const fullPath = join(opts.backupDir, file);
+      const isDir = statSync(fullPath).isDirectory();
+
+      if (isDir) {
+        const manifestPath = join(fullPath, "manifest.json");
+        const hasManifest = existsSync(manifestPath);
+        
+        // Reaper: Si c'est un dossier de backup mais sans manifeste (incomplet/crash)
+        // et qu'il ne s'agit pas de la racine des logs, on le fauche.
+        if (!hasManifest && file.startsWith("backup-")) {
+          try {
+            await rm(fullPath, { recursive: true, force: true });
+            reaped.push(file);
+          } catch (err) {
+            console.error(`[backup reaper] Failed to reap ${file}`, err);
+          }
+        }
+      }
+    }
+
+    res.json({
+      message: `Backup Reaper completed.`,
+      reaped,
+    });
+  });
+
   return router;
 }

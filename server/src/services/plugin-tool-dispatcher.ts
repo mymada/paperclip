@@ -23,7 +23,7 @@
  */
 
 import type { Db } from "@paperclipai/db";
-import { executionWorkspaces } from "@paperclipai/db";
+import { executionWorkspaces, heartbeatRuns } from "@paperclipai/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type {
   PaperclipPluginManifestV1,
@@ -42,6 +42,7 @@ import {
 import { pluginRegistryService } from "./plugin-registry.js";
 import { mcpBridgeService } from "./mcp-bridge.js";
 import { swarmManager } from "./swarm-manager.js";
+import { companyInstaller } from "./company-installer.js";
 import { logger } from "../middleware/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -471,6 +472,51 @@ export function createPluginToolDispatcher(
           toolName: "spawn_worker",
           result: {
             content: `Spawned worker ${swarmResult.workerId} in worktree ${swarmResult.worktreePath} on branch ${swarmResult.branchName}.`,
+          },
+        };
+      }
+
+      if (namespacedName === "paperclip.swarm:activate_skill") {
+        const { skillName } = parameters as { skillName: string };
+        const runId = runContext.runId;
+        if (runId && db) {
+          // Update the run context to include the new skill for the next heartbeat
+          const run = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then(r => r[0]);
+          if (run) {
+            const context = (run.contextSnapshot as Record<string, unknown>) ?? {};
+            const activeSkills = new Set(Array.isArray(context.paperclipActiveSkills) ? context.paperclipActiveSkills : []);
+            activeSkills.add(skillName);
+            context.paperclipActiveSkills = Array.from(activeSkills);
+            
+            await db.update(heartbeatRuns)
+              .set({ contextSnapshot: context, updatedAt: new Date() })
+              .where(eq(heartbeatRuns.id, runId));
+          }
+        }
+
+        return {
+          pluginId: "paperclip.swarm",
+          toolName: "activate_skill",
+          result: {
+            content: `Skill ${skillName} activated. It will be available in the next heartbeat.`,
+          },
+        };
+      }
+
+      if (namespacedName === "paperclip.swarm:hire_company") {
+        const { repoUrl, path: subPath } = parameters as { repoUrl: string; path?: string };
+        const result = await companyInstaller.installFromRepo(db!, undefined, {
+          repoUrl,
+          path: subPath,
+          targetMode: "existing_company",
+          targetCompanyId: runContext.companyId,
+        });
+
+        return {
+          pluginId: "paperclip.swarm",
+          toolName: "hire_company",
+          result: {
+            content: `Successfully hired new agents from ${repoUrl}. New agents: ${result.agents.map(a => a.name).join(", ")}.`,
           },
         };
       }

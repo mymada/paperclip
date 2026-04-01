@@ -6,6 +6,15 @@
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+// Mock DB
+vi.mock("@paperclipai/db", () => ({
+  mcpServers: {
+    status: "status",
+    id: "id",
+    companyId: "companyId",
+  },
+}));
+
 // Mock the MCP SDK
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   return {

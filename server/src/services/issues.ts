@@ -32,6 +32,7 @@ import {
   parseProjectExecutionWorkspacePolicy,
 } from "./execution-workspace-policy.js";
 import { instanceSettingsService } from "./instance-settings.js";
+import { publishLiveEvent } from "./live-events.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
@@ -1644,7 +1645,18 @@ export function issueService(db: Db) {
         .set({ updatedAt: new Date() })
         .where(eq(issues.id, issueId));
 
-      return redactIssueComment(comment, currentUserRedactionOptions.enabled);
+      const result = redactIssueComment(comment, currentUserRedactionOptions.enabled);
+
+      publishLiveEvent({
+        companyId: issue.companyId,
+        type: "heartbeat.run.log",
+        payload: {
+          issueId,
+          comment: result,
+        },
+      });
+
+      return result;
     },
 
     createAttachment: async (input: {

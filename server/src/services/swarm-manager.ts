@@ -32,6 +32,9 @@ class SwarmManagerImpl {
    * [SOURCE: KERNEL Couche H - HIGH_VELOCITY]
    */
   async spawnWorker(config: SwarmWorkerConfig): Promise<SwarmWorkerResult> {
+    // ⚡ Auto-healing: Clean up any orphaned worktrees in this repo before spawning
+    await this.reapOrphanedWorktrees(config.baseCwd);
+
     const workerId = `worker-${Math.random().toString(36).slice(2, 11)}`;
     const branchName = `pcp-swarm-${workerId}`;
     const worktreePath = path.join(config.baseCwd, ".paperclip", "swarm", workerId);
@@ -84,6 +87,28 @@ class SwarmManagerImpl {
       logger.debug(`[swarm-manager] Cleanup complete for ${branchName}`);
     } catch (error) {
       logger.warn({ err: error }, `[swarm-manager] Cleanup failed for ${worktreePath}`);
+    }
+  }
+  /**
+   * Cleans up all orphaned worktrees in a given base directory.
+   * [SOURCE: KERNEL Couche S - SHADOW_FIXES]
+   */
+  async reapOrphanedWorktrees(baseCwd: string): Promise<void> {
+    const swarmDir = path.join(baseCwd, ".paperclip", "swarm");
+    try {
+      const entries = await fs.readdir(swarmDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith("worker-")) {
+          const worktreePath = path.join(swarmDir, entry.name);
+          const branchName = `pcp-swarm-${entry.name}`;
+          logger.info(`[swarm-manager] Reaping orphaned worktree: ${entry.name}`);
+          await this.cleanupWorker(worktreePath, branchName, baseCwd);
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.warn({ err: error }, `[swarm-manager] Failed to read swarm directory at ${swarmDir}`);
+      }
     }
   }
 }

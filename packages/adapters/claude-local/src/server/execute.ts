@@ -20,6 +20,7 @@ import {
   resolveCommandForLogs,
   renderTemplate,
   runChildProcess,
+  buildSkillsDiscoveryPrompt,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
   parseClaudeStreamJson,
@@ -48,7 +49,7 @@ async function resolvePaperclipSkillsDir(): Promise<string | null> {
  * the repo's `skills/` directory, so `--add-dir` makes Claude Code discover
  * them as proper registered skills.
  */
-async function buildSkillsDir(): Promise<string> {
+async function buildSkillsDir(activeSkills: string[] = []): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skills-"));
   await fs.chmod(tmp, 0o755);
   const target = path.join(tmp, ".claude", "skills");
@@ -56,12 +57,18 @@ async function buildSkillsDir(): Promise<string> {
   const skillsDir = await resolvePaperclipSkillsDir();
   if (!skillsDir) return tmp;
   const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+  
+  // ⚡ Slimmer Optimization: Only symlink skills that are "active" or "required"
+  // to prevent context saturation.
   for (const entry of entries) {
     if (entry.isDirectory()) {
-      await fs.symlink(
-        path.join(skillsDir, entry.name),
-        path.join(target, entry.name),
-      );
+      const isRequired = entry.name.startsWith("paperclip."); // Base skills
+      if (isRequired || activeSkills.includes(entry.name)) {
+        await fs.symlink(
+          path.join(skillsDir, entry.name),
+          path.join(target, entry.name),
+        );
+      }
     }
   }
   return tmp;
@@ -360,7 +367,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ),
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
-  const skillsDir = await buildSkillsDir();
+  
+  const activeSkills = Array.isArray(context.paperclipActiveSkills) 
+    ? context.paperclipActiveSkills.filter((s): s is string => typeof s === "string")
+    : [];
+  const skillsDir = await buildSkillsDir(activeSkills);
 
   // When instructionsFilePath is configured, create a combined temp file that
   // includes both the file content and the path directive, so we only need
@@ -421,11 +432,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     lessons.length > 0
       ? `IMPORTANT LESSONS FROM PREVIOUS FAILURES:\n${lessons.map((l) => `- ${l}`).join("\n")}`
       : "";
+
+  // ⚡ Slimmer: Injected summary of available but inactive skills
+  const skillsDiscoveryPrompt = buildSkillsDiscoveryPrompt(config.paperclipRuntimeSkills);
+
   const prompt = joinPromptSections([
     renderedBootstrapPrompt,
     sessionHandoffNote,
     renderedLessons,
     renderedPrompt,
+    skillsDiscoveryPrompt,
     systemPromptSuffix,
   ]);
   const promptMetrics = {

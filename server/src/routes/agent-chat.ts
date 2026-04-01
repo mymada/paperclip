@@ -13,6 +13,8 @@ import {
   issueService,
   documentService,
   secretService,
+  callLlm,
+  type LlmMessage,
 } from "../services/index.js";
 import { notFound } from "../errors.js";
 import { parseObject } from "../adapters/utils.js";
@@ -606,11 +608,44 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
       if (res.writable) res.end();
     });
 
-    proc.on("error", (err) => {
+    proc.on("error", async (err) => {
       clearTimeout(timeout);
-      if (res.writable) {
-        res.write(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
-        res.end();
+      console.error("[agent-chat] Claude process error, falling back to direct LLM call:", err);
+      
+      try {
+        const messages: LlmMessage[] = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt }
+        ];
+        
+        const llmResponse = await callLlm(messages);
+        
+        if (res.writable) {
+          res.write(`data: ${JSON.stringify({ type: "chunk", text: llmResponse })}\n\n`);
+          res.write(
+            `data: ${JSON.stringify({
+              type: "done",
+              duration: Date.now() - startTime,
+              exitCode: 0,
+              fallbackUsed: true,
+            })}\n\n`,
+          );
+          res.end();
+        }
+
+        // Save as comment
+        const cleanedResponse = stripActionSignals(llmResponse).trim();
+        const targetIssueId = taskId || (typeof resolvedIssueId !== 'undefined' ? resolvedIssueId : "");
+        if (cleanedResponse && targetIssueId) {
+          await issueSvc.addComment(targetIssueId, cleanedResponse, {
+            userId: "board-concierge",
+          });
+        }
+      } catch (fallbackErr) {
+        if (res.writable) {
+          res.write(`data: ${JSON.stringify({ type: "error", message: `Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}` })}\n\n`);
+          res.end();
+        }
       }
     });
 
@@ -845,11 +880,44 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
       if (res.writable) res.end();
     });
 
-    proc.on("error", (err) => {
+    proc.on("error", async (err) => {
       clearTimeout(timeout);
-      if (res.writable) {
-        res.write(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
-        res.end();
+      console.error("[agent-chat] Claude process error, falling back to direct LLM call:", err);
+      
+      try {
+        const messages: LlmMessage[] = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt }
+        ];
+        
+        const llmResponse = await callLlm(messages);
+        
+        if (res.writable) {
+          res.write(`data: ${JSON.stringify({ type: "chunk", text: llmResponse })}\n\n`);
+          res.write(
+            `data: ${JSON.stringify({
+              type: "done",
+              duration: Date.now() - startTime,
+              exitCode: 0,
+              fallbackUsed: true,
+            })}\n\n`,
+          );
+          res.end();
+        }
+
+        // Save as comment
+        const cleanedResponse = stripActionSignals(llmResponse).trim();
+        const targetIssueId = taskId || (typeof resolvedIssueId !== 'undefined' ? resolvedIssueId : "");
+        if (cleanedResponse && targetIssueId) {
+          await issueSvc.addComment(targetIssueId, cleanedResponse, {
+            userId: "board-concierge",
+          });
+        }
+      } catch (fallbackErr) {
+        if (res.writable) {
+          res.write(`data: ${JSON.stringify({ type: "error", message: `Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}` })}\n\n`);
+          res.end();
+        }
       }
     });
 

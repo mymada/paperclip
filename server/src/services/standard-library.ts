@@ -95,6 +95,31 @@ export const STANDARD_LIBRARY_PLUGINS: StandardLibraryPlugin[] = [
             },
             required: ["role", "objective"]
           }
+        },
+        {
+          name: "activate_skill",
+          displayName: "Activate Skill",
+          description: "Activate a specific skill for the next heartbeat to access its full instructions.",
+          parametersSchema: {
+            type: "object",
+            properties: {
+              skillName: { type: "string", description: "The name of the skill to activate" }
+            },
+            required: ["skillName"]
+          }
+        },
+        {
+          name: "hire_company",
+          displayName: "Hire Company",
+          description: "Install a complete agent company from a Git repository to assist with the project.",
+          parametersSchema: {
+            type: "object",
+            properties: {
+              repoUrl: { type: "string", description: "The URL of the Git repository (e.g. 'https://github.com/paperclipai/companies')" },
+              path: { type: "string", description: "The optional sub-directory path within the repository" }
+            },
+            required: ["repoUrl"]
+          }
         }
       ]
     }

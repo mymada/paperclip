@@ -23,6 +23,7 @@ import {
   parseObject,
   renderTemplate,
   runChildProcess,
+  buildSkillsDiscoveryPrompt,
 } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import {
@@ -311,6 +312,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? `IMPORTANT LESSONS FROM PREVIOUS FAILURES:\n${lessons.map((l) => `- ${l}`).join("\n")}`
       : "";
 
+  const skillsDiscoveryPrompt = buildSkillsDiscoveryPrompt(config.paperclipRuntimeSkills);
+
   const prompt = joinPromptSections([
     instructionsPrefix,
     renderedBootstrapPrompt,
@@ -319,6 +322,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     paperclipEnvNote,
     apiAccessNote,
     renderedPrompt,
+    skillsDiscoveryPrompt,
     systemPromptSuffix,
   ]);
   const promptMetrics = {

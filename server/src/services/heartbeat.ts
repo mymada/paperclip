@@ -2219,9 +2219,29 @@ export function heartbeatService(db: Db) {
       agent.scopes ?? [],
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
+    
+    // ⚡ Slimmer: Progressive Disclosure implementation
+    const contextSnapshot = (run.contextSnapshot as Record<string, unknown>) ?? {};
+    const activeSkillKeys = Array.isArray(contextSnapshot.paperclipActiveSkills) 
+      ? contextSnapshot.paperclipActiveSkills 
+      : [];
+    
+    const slimmedSkillEntries = runtimeSkillEntries.map(entry => {
+      const isActive = activeSkillKeys.includes(entry.key) || entry.required;
+      if (isActive) return entry;
+      
+      // For inactive skills, we strip the source path so the adapter only sees metadata
+      return {
+        ...entry,
+        source: null, 
+        discoveryOnly: true,
+      };
+    });
+
     const runtimeConfig = {
       ...resolvedConfig,
-      paperclipRuntimeSkills: runtimeSkillEntries,
+      paperclipRuntimeSkills: slimmedSkillEntries,
+      paperclipActiveSkills: activeSkillKeys,
     };
     if (issueAssigneeOverrides?.systemPromptSuffix) {
       (context as any).paperclipSystemPromptSuffix = issueAssigneeOverrides.systemPromptSuffix;
