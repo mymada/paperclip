@@ -625,6 +625,7 @@ export function IssuesList({
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  aria-label="Create new issue"
                   className="ml-auto text-muted-foreground"
                   onClick={() => openNewIssue(newIssueDefaults(group.key))}
                 >

@@ -726,6 +726,7 @@ const ArrayField = React.memo(({
               type="button"
               variant="ghost"
               size="icon"
+              aria-label="Remove item"
               className="h-8 w-8 text-muted-foreground hover:text-destructive"
               disabled={
                 disabled ||
