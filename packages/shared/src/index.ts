@@ -408,6 +408,7 @@ export {
   issueDocumentFormatSchema,
   issueDocumentKeySchema,
   upsertIssueDocumentSchema,
+  restoreIssueDocumentRevisionSchema,
   type CreateIssue,
   type CreateIssueLabel,
   type UpdateIssue,
@@ -421,6 +422,7 @@ export {
   type UpdateExecutionWorkspace,
   type IssueDocumentFormat,
   type UpsertIssueDocument,
+  type RestoreIssueDocumentRevision,
   createGoalSchema,
   updateGoalSchema,
   type CreateGoal,
@@ -560,7 +562,7 @@ export {
 
 export { API_PREFIX, API } from "./api.js";
 export { normalizeAgentUrlKey, deriveAgentUrlKey, isUuidLike } from "./agent-url-key.js";
-export { deriveProjectUrlKey, normalizeProjectUrlKey } from "./project-url-key.js";
+export { deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "./project-url-key.js";
 export {
   AGENT_MENTION_SCHEME,
   PROJECT_MENTION_SCHEME,

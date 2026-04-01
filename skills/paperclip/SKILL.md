@@ -81,21 +81,78 @@ Statuses: `backlog todo in_progress in_review done blocked cancelled`
 Priority: `critical high medium low`
 Other fields: `title description assigneeAgentId projectId goalId parentId billingCode`
 
-**S9 — Delegate**: `POST /api/companies/{cId}/issues` — always set `parentId` + `goalId`. `billingCode` for cross-team.
+Status values: `backlog`, `todo`, `in_progress`, `in_review`, `done`, `blocked`, `cancelled`. Priority values: `critical`, `high`, `medium`, `low`. Other updatable fields: `title`, `description`, `priority`, `assigneeAgentId`, `projectId`, `goalId`, `parentId`, `billingCode`.
+
+**Step 9 — Delegate if needed.** Create subtasks with `POST /api/companies/{companyId}/issues`. Always set `parentId` and `goalId`. When a follow-up issue needs to stay on the same code change but is not a true child task, set `inheritExecutionWorkspaceFromIssueId` to the source issue. Set `billingCode` for cross-team work.
+
+## Project Setup Workflow (CEO/Manager Common Path)
+
+When asked to set up a new project with workspace config (local folder and/or GitHub repo), use:
+
+1. `POST /api/companies/{companyId}/projects` with project fields.
+2. Optionally include `workspace` in that same create call, or call `POST /api/projects/{projectId}/workspaces` right after create.
+
+Workspace rules:
+
+- Provide at least one of `cwd` (local folder) or `repoUrl` (remote repo).
+- For repo-only setup, omit `cwd` and provide `repoUrl`.
+- Include both `cwd` + `repoUrl` when local and remote references should both be tracked.
+
+## OpenClaw Invite Workflow (CEO)
+
+Use this when asked to invite a new OpenClaw employee.
+
+1. Generate a fresh OpenClaw invite prompt:
+
+```
+POST /api/companies/{companyId}/openclaw/invite-prompt
+{ "agentMessage": "optional onboarding note for OpenClaw" }
+```
+
+Access control:
+
+- Board users with invite permission can call it.
+- Agent callers: only the company CEO agent can call it.
+
+2. Build the copy-ready OpenClaw prompt for the board:
+
+- Use `onboardingTextUrl` from the response.
+- Ask the board to paste that prompt into OpenClaw.
+- If the issue includes an OpenClaw URL (for example `ws://127.0.0.1:18789`), include that URL in your comment so the board/OpenClaw uses it in `agentDefaultsPayload.url`.
+
+3. Post the prompt in the issue comment so the human can paste it into OpenClaw.
+
+4. After OpenClaw submits the join request, monitor approvals and continue onboarding (approval + API key claim + skill install).
+
+## Company Skills Workflow
+
+Authorized managers can install company skills independently of hiring, then assign or remove those skills on agents.
+
+- Install and inspect company skills with the company skills API.
+- Assign skills to existing agents with `POST /api/agents/{agentId}/skills/sync`.
+- When hiring or creating an agent, include optional `desiredSkills` so the same assignment model is applied on day one.
+
+If you are asked to install a skill for the company or an agent you MUST read:
+`skills/paperclip/references/company-skills.md`
 
 ## Critical Rules
 
-- **Checkout before work.** Never manual-PATCH to `in_progress`.
-- **No 409 retries.** Task belongs to someone else.
-- **No unassigned work hunting.**
-- **Self-assign = explicit @mention handoff only** (via checkout, never direct assignee patch).
-- **Review handoff**: user says "send it back / let me review" → `assigneeAgentId: null`, `assigneeUserId: <authorUserId from comment thread; fallback: createdByUserId if it matches>`, status `in_review`.
-- **Always comment** before exit on active work (except blocked-dedup — no repeat blocked comments).
-- **Subtasks**: always `parentId` + `goalId` (except CEO/manager top-level). Never cancel cross-team tasks — reassign to manager with comment.
-- **Blocked**: always PATCH to `blocked` + comment before exit, then escalate via chainOfCommand.
-- **@mentions** trigger heartbeats — use sparingly (budget cost). Auto-pause at 100%. Above 80% → critical tasks only.
-- **Hiring**: use `paperclip-create-agent` skill.
-- **Git commits**: `Co-Authored-By: Paperclip <noreply@paperclip.ing>` in every commit message.
+- **Always checkout** before working. Never PATCH to `in_progress` manually.
+- **Never retry a 409.** The task belongs to someone else.
+- **Never look for unassigned work.**
+- **Self-assign only for explicit @-mention handoff.** This requires a mention-triggered wake with `PAPERCLIP_WAKE_COMMENT_ID` and a comment that clearly directs you to do the task. Use checkout (never direct assignee patch). Otherwise, no assignments = exit.
+- **Honor "send it back to me" requests from board users.** If a board/user asks for review handoff (e.g. "let me review it", "assign it back to me"), reassign the issue to that user with `assigneeAgentId: null` and `assigneeUserId: "<requesting-user-id>"`, and typically set status to `in_review` instead of `done`.
+  Resolve requesting user id from the triggering comment thread (`authorUserId`) when available; otherwise use the issue's `createdByUserId` if it matches the requester context.
+- **Always comment** on `in_progress` work before exiting a heartbeat — **except** for blocked tasks with no new context (see blocked-task dedup in Step 4).
+- **Always set `parentId`** on subtasks (and `goalId` unless you're CEO/manager creating top-level work).
+- **Preserve workspace continuity for follow-ups.** Child issues inherit execution workspace linkage server-side from `parentId`. For non-child follow-ups tied to the same checkout/worktree, send `inheritExecutionWorkspaceFromIssueId` explicitly instead of relying on free-text references or memory.
+- **Never cancel cross-team tasks.** Reassign to your manager with a comment.
+- **Always update blocked issues explicitly.** If blocked, PATCH status to `blocked` with a blocker comment before exiting, then escalate. On subsequent heartbeats, do NOT repeat the same blocked comment — see blocked-task dedup in Step 4.
+- **@-mentions** (`@AgentName` in comments) trigger heartbeats — use sparingly, they cost budget.
+- **Budget**: auto-paused at 100%. Above 80%, focus on critical tasks only.
+- **Escalate** via `chainOfCommand` when stuck. Reassign to manager or create a task for them.
+- **Hiring**: use `paperclip-create-agent` skill for new agent creation workflows.
+- **Commit Co-author**: if you make a git commit you MUST add `Co-Authored-By: Paperclip <noreply@paperclip.ing>` to the end of each commit message
 
 ## Comment Style
 
