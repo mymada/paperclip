@@ -17,6 +17,7 @@ import {
 import { callLlm, type LlmMessage } from "../services/llm-client.js";
 import { notFound } from "../errors.js";
 import { parseObject } from "../adapters/utils.js";
+import { assertCompanyAccess } from "./authz.js";
 
 /**
  * Parse structured action signals from CEO response.
@@ -103,6 +104,8 @@ export function agentChatRoutes(db: Db) {
     if (!agent) {
       throw notFound("Agent not found");
     }
+
+    await assertCompanyAccess(req, agent.companyId);
 
     // Save the user's message as a comment
     const issueSvc = issueService(db);
@@ -267,6 +270,8 @@ export function agentChatRoutes(db: Db) {
       throw notFound("Agent not found");
     }
 
+    await assertCompanyAccess(req, agent.companyId);
+
     const issueSvc = issueService(db);
     const comment = await issueSvc.addComment(taskId, message, {
       agentId: agent.id,
@@ -304,6 +309,8 @@ export function agentChatRoutes(db: Db) {
     if (!agent) {
       throw notFound("Agent not found");
     }
+
+    await assertCompanyAccess(req, agent.companyId);
 
     // Respond immediately — generation happens in background
     res.json({ status: "generating" });
@@ -421,6 +428,8 @@ Write the "${artifactTitle}" now. Be specific, actionable, and thorough. Use mar
     if (!agent) {
       throw notFound("Agent not found");
     }
+
+    await assertCompanyAccess(req, agent.companyId);
 
     // Save user message as comment
     const issueSvc = issueService(db);
@@ -685,6 +694,8 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
       res.status(400).json({ error: "companyId and message are required" });
       return;
     }
+
+    await assertCompanyAccess(req, companyId);
 
     const issueSvc = issueService(db);
     let issueId = taskId;
