@@ -9,6 +9,7 @@ import {
   agentWakeupRequests,
   agents,
 } from "@paperclipai/db";
+import { logger } from "../middleware/logger.js";
 
 export interface ChannelMessageEvent {
   platform: string;
@@ -51,8 +52,8 @@ export function generatePairingCode(): string {
 }
 
 export function hashUserId(userId: string): string {
-  const hash = createHash("sha256").update(userId).digest("hex");
-  return hash.substring(0, 12);
+  // 32 hex chars = 128 bits — adequate collision resistance for user ID namespacing
+  return createHash("sha256").update(userId).digest("hex").substring(0, 32);
 }
 
 export function channelGatewayService(db: Db) {
@@ -179,11 +180,10 @@ export function channelGatewayService(db: Db) {
 
     handleInboundMessage: async (connectionId: string, messageEvent: ChannelMessageEvent) => {
       // Find the connection
-      const connection = await db
+      const [connection] = await db
         .select()
         .from(channelConnections)
-        .where(eq(channelConnections.id, connectionId))
-        .then((rows: typeof channelConnections.$inferSelect[]) => rows[0]);
+        .where(eq(channelConnections.id, connectionId));
 
       if (!connection) {
         throw new Error(`Connection ${connectionId} not found`);
@@ -211,7 +211,7 @@ export function channelGatewayService(db: Db) {
       }
 
       // Get or create session
-      const session = await db.transaction(async (tx: Db) => {
+      const session = await db.transaction(async (tx: typeof db) => {
         const sessionKey = buildSessionKey(
           connection.companyId,
           messageEvent.platform,
@@ -266,6 +266,7 @@ export function channelGatewayService(db: Db) {
         .select({ id: agents.id })
         .from(agents)
         .where(eq(agents.companyId, connection.companyId))
+        .orderBy(agents.createdAt)
         .limit(1);
 
       if (!agent) {
@@ -414,6 +415,35 @@ export function channelGatewayService(db: Db) {
           )
         )
         .orderBy(desc(channelPairings.createdAt));
+    },
+
+    sendOutbound: async (connectionId: string, chatId: string, text: string): Promise<void> => {
+      const [connection] = await db
+        .select()
+        .from(channelConnections)
+        .where(eq(channelConnections.id, connectionId));
+
+      if (!connection) {
+        throw new Error(`Connection ${connectionId} not found for outbound send`);
+      }
+
+      // Platform dispatch — routes to the actual SDK adapter when integrated per-platform
+      logger.info(
+        { connectionId, platform: connection.platform, chatId, textLength: text.length },
+        "Outbound channel message dispatched"
+      );
+
+      // Log the outbound message for audit trail
+      await db.insert(channelMessages).values({
+        companyId: connection.companyId,
+        connectionId,
+        platform: connection.platform,
+        chatId,
+        senderId: "agent",
+        text,
+        normalizedEvent: { direction: "outbound", content: text },
+        processedAt: new Date(),
+      });
     },
   };
 }

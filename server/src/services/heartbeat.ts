@@ -14,6 +14,7 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  issuePlans,
   projects,
   projectWorkspaces,
 } from "@paperclipai/db";
@@ -48,6 +49,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { planModeService } from "./plan-mode.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import {
@@ -2142,6 +2144,35 @@ export function heartbeatService(db: Db) {
           .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
           .then((rows) => rows[0] ?? null)
       : null;
+
+    // Plan Mode gate: if issue requires a plan (proofRequirementTier >= 2), block without approved plan
+    if (issueId && issueContext) {
+      try {
+        const [fullIssue] = await db
+          .select({ proofRequirementTier: issues.proofRequirementTier })
+          .from(issues)
+          .where(eq(issues.id, issueId));
+
+        if (fullIssue?.proofRequirementTier && fullIssue.proofRequirementTier >= 2) {
+          const activePlan = await planModeService(db).getActivePlanForIssue(issueId);
+          if (!activePlan) { // getActivePlanForIssue already filters for status="approved"
+            // Block execution — set run to failed with a clear reason
+            await setRunStatus(run.id, "failed", {
+              errorMessage: "plan_required: An approved plan is required before execution for this issue. Create and get a plan approved via /companies/{companyId}/plans.",
+            });
+            await setWakeupStatus(run.wakeupRequestId, "failed", {
+              finishedAt: new Date(),
+              error: "plan_required",
+            });
+            logger.info({ issueId, agentId: agent.id }, "Plan gate blocked execution: no approved plan");
+            return;
+          }
+        }
+      } catch (planGateErr) {
+        logger.warn({ issueId, err: planGateErr }, "Plan gate check failed, continuing execution");
+      }
+    }
+
     const issueAssigneeOverrides =
       issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAdapterOverrides(
@@ -2738,15 +2769,14 @@ export function heartbeatService(db: Db) {
         context.paperclipHierarchicalInstructions = hierarchicalInstructions;
       }
 
-      if (issueId) {
-        try {
-          const lessons = await companyLessonService(db).findRelevant(agent.companyId, issueContext?.title ?? "");
-          if (lessons.length > 0) {
-            context.paperclipLessons = lessons.map((l) => l.rule);
-          }
-        } catch (err) {
-          logger.warn({ issueId, err }, "failed to fetch relevant lessons");
+      try {
+        const lessonQuery = issueContext?.title ?? agent.name ?? "";
+        const lessons = await companyLessonService(db).findRelevant(agent.companyId, lessonQuery);
+        if (lessons.length > 0) {
+          context.paperclipLessons = lessons.map((l) => l.rule);
         }
+      } catch (err) {
+        logger.warn({ agentId: agent.id, err }, "failed to fetch relevant lessons");
       }
 
       const adapterResult = await adapter.execute({

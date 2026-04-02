@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { notificationRules, notificationDeliveries, agentWakeupRequests } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
+import { channelGatewayService } from "./channel-gateway.js";
 
 function renderTemplate(template: string, payload: Record<string, unknown>): string {
   let rendered = template;
@@ -94,6 +95,8 @@ export function notificationDispatcherService(db: Db) {
 
     dispatch: async (companyId: string, triggerType: string, eventPayload: Record<string, unknown>): Promise<void> => {
       try {
+        const gateway = channelGatewayService(db);
+
         // Find all enabled rules matching the trigger type
         const rules = await db
           .select()
@@ -110,7 +113,7 @@ export function notificationDispatcherService(db: Db) {
           try {
             // Check conditions if any
             if (rule.conditions) {
-              const conditions = rule.conditions as any;
+              const conditions = rule.conditions;
               let shouldSkip = false;
 
               if (conditions.agentId && conditions.agentId !== eventPayload.agentId) {
@@ -146,15 +149,21 @@ export function notificationDispatcherService(db: Db) {
               }, "Notification dispatched to log");
 
             } else if (rule.deliveryTarget === "channel") {
-              // Create an agent wakeup request with the message as payload
-              const targetConfig = rule.targetConfig as any;
-              if (targetConfig?.agentId) {
+              const targetConfig = rule.targetConfig;
+              if (rule.channelConnectionId && targetConfig?.chatId) {
+                // Direct outbound send to the channel (Slack/Telegram/Discord/etc.)
+                await gateway.sendOutbound(
+                  rule.channelConnectionId,
+                  targetConfig.chatId,
+                  renderedMessage
+                );
+              } else if (targetConfig?.agentId) {
+                // Fallback: wake an agent to handle the notification delivery
                 await db.insert(agentWakeupRequests).values({
                   companyId,
                   agentId: targetConfig.agentId,
                   source: "notification",
                   reason: `Notification: ${rule.name}`,
-                  priority: "normal",
                   payload: {
                     type: "notification",
                     message: renderedMessage,

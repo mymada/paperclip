@@ -3,8 +3,9 @@ import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { validate } from "../middleware/validate.js";
 import { channelGatewayService, type ChannelMessageEvent } from "../services/channel-gateway.js";
-import { assertCompanyAccess } from "./authz.js";
+import { assertCompanyAccess, getActorInfo } from "./authz.js";
 import { notFound, forbidden } from "../errors.js";
+import { logger } from "../middleware/logger.js";
 
 const createConnectionSchema = z.object({
   platform: z.enum(["slack", "telegram", "discord", "email", "webhook", "whatsapp", "signal"]),
@@ -137,7 +138,9 @@ export function channelRoutes(db: Db) {
       // Validate channel secret
       const channelSecret = req.headers["x-paperclip-channel-secret"] as string | undefined;
       const expectedSecret = (connection.config as Record<string, unknown>)?.channelSecret as string | undefined;
-      if (expectedSecret && channelSecret !== expectedSecret) {
+      if (!expectedSecret) {
+        logger.warn({ connectionId, companyId }, "Inbound webhook has no channel secret configured — accepting unauthenticated request");
+      } else if (channelSecret !== expectedSecret) {
         throw forbidden("Invalid channel secret");
       }
 
@@ -193,14 +196,9 @@ export function channelRoutes(db: Db) {
       const companyId = req.params.companyId as string;
       assertCompanyAccess(req, companyId);
 
-      let approvedByUserId = "unknown";
-      if (req.actor.type === "board" && req.actor.userId) {
-        approvedByUserId = req.actor.userId;
-      } else if (req.actor.type === "agent") {
-        approvedByUserId = `agent:${req.actor.agentId}`;
-      }
+      const { actorId } = getActorInfo(req);
 
-      const pairing = await service.approvePairing(companyId, req.body.code as string, approvedByUserId);
+      const pairing = await service.approvePairing(companyId, req.body.code as string, actorId);
       res.json(pairing);
     }
   );

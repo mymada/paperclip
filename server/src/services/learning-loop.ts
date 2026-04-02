@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { heartbeatRuns } from "@paperclipai/db";
+import { heartbeatRuns, issues } from "@paperclipai/db";
 import { callLlm } from "./llm-client.js";
 import { companyLessonService } from "./company-lessons.js";
 import { logger } from "../middleware/logger.js";
@@ -20,12 +20,19 @@ export function learningLoopService(db: Db) {
         }
 
         // Get issue details if available
-        let issueTitle = "Unknown Issue";
+        let issueTitle = "General Task";
+        let resolvedIssueId: string | null = null;
         if (run.contextSnapshot && typeof run.contextSnapshot === "object") {
-          const context = run.contextSnapshot as any;
-          if (context.issue?.title) {
-            issueTitle = context.issue.title;
+          const ctx = run.contextSnapshot as Record<string, unknown>;
+          resolvedIssueId = typeof ctx.issueId === "string" ? ctx.issueId : null;
+          if (typeof ctx.issue === "object" && ctx.issue !== null) {
+            issueTitle = (ctx.issue as any).title ?? issueTitle;
           }
+        }
+        // If we have issueId but no title from context, try DB
+        if (resolvedIssueId && issueTitle === "General Task") {
+          const [issueRow] = await db.select({ title: issues.title }).from(issues).where(eq(issues.id, resolvedIssueId));
+          if (issueRow) issueTitle = issueRow.title;
         }
 
         // Build the summary from the run data
@@ -96,6 +103,8 @@ Only output the JSON array, nothing else.`;
           ) {
             await lessonService.create({
               companyId,
+              issueId: resolvedIssueId,
+              type: lesson.type as "procedure" | "fact" | "antibody",
               rule: lesson.rule.trim(),
               status: "draft",
             });

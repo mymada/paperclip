@@ -22,6 +22,7 @@ export function companyLessonService(db: Db) {
     create: async (input: {
       companyId: string;
       issueId?: string | null;
+      type?: "procedure" | "fact" | "antibody";
       rule: string;
       status?: "draft" | "active" | "archived";
     }) => {
@@ -30,6 +31,7 @@ export function companyLessonService(db: Db) {
         .values({
           companyId: input.companyId,
           issueId: input.issueId ?? null,
+          type: input.type ?? "fact",
           rule: input.rule,
           status: input.status ?? "draft",
         })
