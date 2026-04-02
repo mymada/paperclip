@@ -253,6 +253,7 @@ const TimelineList = memo(function TimelineList({
                   <Button
                     variant="ghost"
                     size="icon-sm"
+                    aria-label="Cancel queued action"
                     title="Cancel queued action"
                     disabled={isInterrupting}
                     onClick={() => onInterruptQueued(comment.queueTargetRunId!)}
