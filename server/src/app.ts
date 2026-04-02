@@ -26,6 +26,10 @@ import { dashboardRoutes } from "./routes/dashboard.js";
 import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
 import { backupRoutes } from "./routes/backup.js";
+import { channelRoutes } from "./routes/channels.js";
+import { planRoutes } from "./routes/plans.js";
+import { delegationRoutes } from "./routes/delegations.js";
+import { notificationRuleRoutes } from "./routes/notification-rules.js";
 import type { BackupSchedulerState, BackupLastResult, BackupLastError, BackupConfigSnapshot } from "./index.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
@@ -171,6 +175,10 @@ export async function createApp(
   if (opts.backup) {
     api.use("/backup", backupRoutes(opts.backup));
   }
+  api.use(channelRoutes(db));
+  api.use(planRoutes(db));
+  api.use(delegationRoutes(db));
+  api.use(notificationRuleRoutes(db));
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

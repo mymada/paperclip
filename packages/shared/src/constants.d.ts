@@ -88,7 +88,7 @@ export declare const WAKEUP_REQUEST_STATUSES: readonly ["queued", "deferred_issu
 export type WakeupRequestStatus = (typeof WAKEUP_REQUEST_STATUSES)[number];
 export declare const HEARTBEAT_RUN_STATUSES: readonly ["queued", "running", "succeeded", "failed", "cancelled", "timed_out"];
 export type HeartbeatRunStatus = (typeof HEARTBEAT_RUN_STATUSES)[number];
-export declare const LIVE_EVENT_TYPES: readonly ["heartbeat.run.queued", "heartbeat.run.status", "heartbeat.run.event", "heartbeat.run.log", "agent.status", "activity.logged", "plugin.ui.updated", "plugin.worker.crashed", "plugin.worker.restarted"];
+export declare const LIVE_EVENT_TYPES: readonly ["heartbeat.run.queued", "heartbeat.run.status", "heartbeat.run.event", "heartbeat.run.log", "agent.status", "activity.logged", "plugin.ui.updated", "plugin.worker.crashed", "plugin.worker.restarted", "plan.updated", "delegation.updated", "channel.message.received", "notification.dispatched"];
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
 export declare const PRINCIPAL_TYPES: readonly ["user", "agent"];
 export type PrincipalType = (typeof PRINCIPAL_TYPES)[number];

@@ -30,6 +30,8 @@ import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { companyLessonService } from "./company-lessons.js";
 import { retrospectiveService } from "./retrospective.js";
+import { learningLoopService } from "./learning-loop.js";
+import { notificationDispatcherService } from "./notification-dispatcher.js";
 import { agentInstructionsService } from "./agent-instructions.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
@@ -1518,6 +1520,31 @@ export function heartbeatService(db: Db) {
           finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
         },
       });
+
+      // Dispatch notifications for heartbeat status changes
+      const triggerType = updated.status === "succeeded"
+        ? "heartbeat.completed"
+        : updated.status === "failed"
+          ? "heartbeat.failed"
+          : null;
+
+      if (triggerType) {
+        void notificationDispatcherService(db)
+          .dispatch(updated.companyId, triggerType, {
+            runId: updated.id,
+            agentId: updated.agentId,
+            status: updated.status,
+            invocationSource: updated.invocationSource,
+            triggerDetail: updated.triggerDetail,
+            error: updated.error,
+            errorCode: updated.errorCode,
+            startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
+            finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
+          })
+          .catch((err) => {
+            logger.warn({ runId: updated.id, err }, "Notification dispatch failed non-critically");
+          });
+      }
     }
 
     return updated;
@@ -2885,6 +2912,15 @@ export function heartbeatService(db: Db) {
             .analyzeIssueFailures(issueId)
             .catch((err) => {
               logger.warn({ issueId, err }, "failed to trigger retrospective analysis");
+            });
+        }
+
+        // After a successful run, trigger learning loop
+        if (status === "succeeded") {
+          void learningLoopService(db)
+            .extractLessonsFromRun(run.id, run.companyId)
+            .catch((err) => {
+              logger.warn({ runId: run.id, err }, "Learning loop failed non-critically");
             });
         }
 

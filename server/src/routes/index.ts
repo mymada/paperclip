@@ -16,3 +16,7 @@ export { llmRoutes } from "./llms.js";
 export { accessRoutes } from "./access.js";
 export { instanceSettingsRoutes } from "./instance-settings.js";
 export { backupRoutes } from "./backup.js";
+export { channelRoutes } from "./channels.js";
+export { planRoutes } from "./plans.js";
+export { delegationRoutes } from "./delegations.js";
+export { notificationRuleRoutes } from "./notification-rules.js";
