@@ -14,6 +14,7 @@ import type {
   BackupLastResult,
   BackupSchedulerState,
 } from "../index.js";
+import { assertInstanceAdmin } from "./authz.js";
 
 // Known file entries that may exist in a full backup directory
 const FILE_ENTRIES = ["skills", "projects", "workspaces", "storage", "secrets", "config.json"] as const;
@@ -63,6 +64,11 @@ export function backupRoutes(opts: {
   getConfig: () => BackupConfigSnapshot | null;
 }) {
   const router = Router();
+
+  router.use((req, _res, next) => {
+    assertInstanceAdmin(req);
+    next();
+  });
 
   // GET /api/backup — list available backups + status
   router.get("/", (_req, res) => {

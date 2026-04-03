@@ -42,6 +42,11 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+function detectGeminiSandboxUnavailable(stdout: string, stderr: string, parsedError: string | null) {
+  const combined = `${parsedError ?? ""}\n${stderr}\n${stdout}`.toLowerCase();
+  return combined.includes("gemini_sandbox is true but failed to determine command for sandbox");
+}
+
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
@@ -166,6 +171,11 @@ export async function testEnvironment(
       );
       const parsed = parseGeminiJsonl(probe.stdout);
       const detail = summarizeProbeDetail(probe.stdout, probe.stderr, parsed.errorMessage);
+      const sandboxUnavailable = detectGeminiSandboxUnavailable(
+        probe.stdout,
+        probe.stderr,
+        parsed.errorMessage,
+      );
       const authMeta = detectGeminiAuthRequired({
         parsed: parsed.resultEvent,
         stdout: probe.stdout,
@@ -217,6 +227,14 @@ export async function testEnvironment(
           message: "Gemini CLI is installed, but authentication is not ready.",
           ...(detail ? { detail } : {}),
           hint: "Run `gemini auth` or configure GEMINI_API_KEY / GOOGLE_API_KEY in adapter env/shell, then retry the probe.",
+        });
+      } else if (sandboxUnavailable) {
+        checks.push({
+          code: "gemini_hello_probe_sandbox_unavailable",
+          level: "warn",
+          message: "Gemini CLI sandbox prerequisites are missing.",
+          ...(detail ? { detail } : {}),
+          hint: "Disable Gemini sandbox for this agent, or install Docker/Podman, or set GEMINI_SANDBOX to an explicit sandbox command, then retry the probe.",
         });
       } else {
         checks.push({

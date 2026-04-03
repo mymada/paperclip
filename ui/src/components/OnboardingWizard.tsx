@@ -22,7 +22,10 @@ import {
   extractProviderIdWithFallback
 } from "../lib/model-utils";
 import { getUIAdapter } from "../adapters";
-import { defaultCreateValues } from "./agent-config-defaults";
+import {
+  defaultCreateValues,
+  DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
+} from "./agent-config-defaults";
 import { parseOnboardingGoalInput } from "../lib/onboarding-goal";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
@@ -638,6 +641,8 @@ export function OnboardingWizard() {
       dangerouslyBypassSandbox:
         adapterType === "codex_local"
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
+          : adapterType === "gemini_local"
+            ? DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX
           : defaultCreateValues.dangerouslyBypassSandbox
     });
     if (adapterType === "claude_local" && forceUnsetAnthropicApiKey) {
@@ -1401,7 +1406,7 @@ Follow this structure for every role in the plan.`,
                     <label className="text-xs text-muted-foreground mb-2 block">
                       Adapter type
                     </label>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                       {[
                         {
                           value: "claude_local" as const,
@@ -1416,6 +1421,12 @@ Follow this structure for every role in the plan.`,
                           icon: Code,
                           desc: "Local Codex agent",
                           recommended: true
+                        },
+                        {
+                          value: "gemini_local" as const,
+                          label: "Gemini CLI",
+                          icon: Gem,
+                          desc: "Local Gemini agent"
                         }
                       ].map((opt) => (
                         <button
@@ -1429,12 +1440,15 @@ Follow this structure for every role in the plan.`,
                           onClick={() => {
                             const nextType = opt.value as AdapterType;
                             setAdapterType(nextType);
-                            if (nextType === "codex_local" && !model) {
+                            if (nextType === "codex_local") {
                               setModel(DEFAULT_CODEX_LOCAL_MODEL);
+                              return;
                             }
-                            if (nextType !== "codex_local") {
-                              setModel("");
+                            if (nextType === "gemini_local") {
+                              setModel(DEFAULT_GEMINI_LOCAL_MODEL);
+                              return;
                             }
+                            setModel("");
                           }}
                         >
                           {opt.recommended && (
@@ -1467,12 +1481,6 @@ Follow this structure for every role in the plan.`,
                     {showMoreAdapters && (
                       <div className="grid grid-cols-2 gap-2 mt-2">
                         {[
-                          {
-                            value: "gemini_local" as const,
-                            label: "Gemini CLI",
-                            icon: Gem,
-                            desc: "Local Gemini agent"
-                          },
                           {
                             value: "opencode_local" as const,
                             label: "OpenCode",

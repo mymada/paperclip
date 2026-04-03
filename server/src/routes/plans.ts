@@ -5,7 +5,7 @@ import { validate } from "../middleware/validate.js";
 import { planModeService } from "../services/index.js";
 import { logger } from "../middleware/logger.js";
 import { HttpError } from "../errors.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const createPlanSchema = z.object({
   issueId: z.string().uuid().optional(),
@@ -110,6 +110,7 @@ export function planRoutes(db: Db) {
       try {
         const companyId = req.params.companyId as string;
         const planId = req.params.planId as string;
+        assertBoard(req);
         assertCompanyAccess(req, companyId);
         const actorInfo = getActorInfo(req);
 
@@ -137,6 +138,7 @@ export function planRoutes(db: Db) {
       try {
         const companyId = req.params.companyId as string;
         const planId = req.params.planId as string;
+        assertBoard(req);
         assertCompanyAccess(req, companyId);
         const actorInfo = getActorInfo(req);
 

@@ -1,5 +1,7 @@
 import type { CreateConfigValues } from "@paperclipai/adapter-utils";
 
+export const DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX = true;
+
 export const defaultCreateValues: CreateConfigValues = {
   adapterType: "claude_local",
   cwd: "",

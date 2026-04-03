@@ -283,6 +283,8 @@ export function costRoutes(db: Db) {
       return;
     }
 
+    assertCompanyAccess(req, agent.companyId);
+
     if (req.actor.type === "agent") {
       if (req.actor.agentId !== agentId) {
         res.status(403).json({ error: "Agent can only change its own budget" });

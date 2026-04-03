@@ -12,6 +12,26 @@ export class ApiError extends Error {
   }
 }
 
+async function readResponseBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text) return null;
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   const body = init?.body;
@@ -24,16 +44,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     ...init,
   });
+
+  const responseBody = await readResponseBody(res);
+
   if (!res.ok) {
-    const errorBody = await res.json().catch(() => null);
     throw new ApiError(
-      (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
+      typeof responseBody === "object" && responseBody !== null && "error" in responseBody
+        ? String((responseBody as { error?: unknown }).error ?? `Request failed: ${res.status}`)
+        : typeof responseBody === "string" && responseBody.length > 0
+          ? responseBody
+          : `Request failed: ${res.status}`,
       res.status,
-      errorBody,
+      responseBody,
     );
   }
-  if (res.status === 204) return undefined as T;
-  return res.json();
+  if (res.status === 204 || responseBody === null) return undefined as T;
+  return responseBody as T;
 }
 
 export const api = {

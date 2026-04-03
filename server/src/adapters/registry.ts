@@ -81,6 +81,7 @@ import {
 } from "hermes-paperclip-adapter";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
+import { unprocessable } from "../errors.js";
 
 const claudeLocalAdapter: ServerAdapterModule = {
   type: "claude_local",
@@ -206,8 +207,7 @@ const adaptersByType = new Map<string, ServerAdapterModule>(
 export function getServerAdapter(type: string): ServerAdapterModule {
   const adapter = adaptersByType.get(type);
   if (!adapter) {
-    // Fall back to process adapter for unknown types
-    return processAdapter;
+    throw unprocessable(`Unknown adapter type: ${type}`);
   }
   return adapter;
 }

@@ -54,6 +54,7 @@ export function Layout() {
   const { togglePanelVisible } = usePanel();
   const {
     companies,
+    error: companiesError,
     loading: companiesLoading,
     selectedCompany,
     selectedCompanyId,
@@ -97,13 +98,13 @@ export function Layout() {
   }).data?.keyboardShortcuts === true;
 
   useEffect(() => {
-    if (companiesLoading || onboardingTriggered.current) return;
+    if (companiesLoading || companiesError || onboardingTriggered.current) return;
     if (health?.deploymentMode === "authenticated") return;
     if (companies.length === 0) {
       onboardingTriggered.current = true;
       openOnboarding();
     }
-  }, [companies, companiesLoading, openOnboarding, health?.deploymentMode]);
+  }, [companies, companiesError, companiesLoading, openOnboarding, health?.deploymentMode]);
 
   useEffect(() => {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;

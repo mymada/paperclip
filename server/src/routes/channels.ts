@@ -139,7 +139,8 @@ export function channelRoutes(db: Db) {
       const channelSecret = req.headers["x-paperclip-channel-secret"] as string | undefined;
       const expectedSecret = (connection.config as Record<string, unknown>)?.channelSecret as string | undefined;
       if (!expectedSecret) {
-        logger.warn({ connectionId, companyId }, "Inbound webhook has no channel secret configured — accepting unauthenticated request");
+        logger.warn({ connectionId, companyId }, "Inbound webhook rejected because no channel secret is configured");
+        throw forbidden("Channel secret is not configured");
       } else if (channelSecret !== expectedSecret) {
         throw forbidden("Invalid channel secret");
       }

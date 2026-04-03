@@ -32,6 +32,11 @@ function formatCost(costUsd: string | null) {
   return `$${parseFloat(costUsd).toFixed(2)}`;
 }
 
+function formatStepCost(cost?: number) {
+  if (cost == null) return null;
+  return `$${cost.toFixed(2)}`;
+}
+
 export function Plans() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -62,8 +67,8 @@ export function Plans() {
   });
 
   const rejectPlan = useMutation({
-    mutationFn: ({ planId, reason }: { planId: string; reason?: string }) =>
-      plansApi.reject(selectedCompanyId!, planId, reason),
+    mutationFn: ({ planId, reviewNote }: { planId: string; reviewNote: string }) =>
+      plansApi.reject(selectedCompanyId!, planId, reviewNote.trim()),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.plans.list(selectedCompanyId!) });
       setRejectingPlan(null);
@@ -140,7 +145,7 @@ export function Plans() {
                               {plan.status}
                             </Badge>
                             <Badge variant="outline">
-                              Issue #{plan.issueId.slice(0, 8)}
+                              {plan.issueId ? `Issue #${plan.issueId.slice(0, 8)}` : "Standalone plan"}
                             </Badge>
                             <span className="text-xs text-muted-foreground">
                               {formatCost(plan.estimatedCostUsd)}
@@ -149,7 +154,7 @@ export function Plans() {
                               {new Date(plan.createdAt).toLocaleDateString()}
                             </span>
                           </div>
-                          <p className="text-sm text-muted-foreground">{plan.summary}</p>
+                          <p className="text-sm text-muted-foreground">{plan.objective}</p>
                         </div>
                         {plan.status === "draft" && (
                           <div className="flex items-center gap-2 ml-4">
@@ -182,8 +187,8 @@ export function Plans() {
                               {plan.steps.map((step, index) => (
                                 <li key={index} className="text-muted-foreground">
                                   {step.description}
-                                  {step.estimatedMinutes && (
-                                    <span className="ml-2 text-xs">({step.estimatedMinutes}min)</span>
+                                  {step.estimatedCost != null && (
+                                    <span className="ml-2 text-xs">({formatStepCost(step.estimatedCost)})</span>
                                   )}
                                 </li>
                               ))}
@@ -196,7 +201,11 @@ export function Plans() {
                             <h4 className="text-sm font-medium mb-2">Risks</h4>
                             <ul className="text-sm space-y-1 list-disc list-inside">
                               {plan.risks.map((risk, index) => (
-                                <li key={index} className="text-muted-foreground">{risk}</li>
+                                <li key={index} className="text-muted-foreground">
+                                  <span className="font-medium uppercase">{risk.severity}</span>
+                                  {": "}
+                                  {risk.description}
+                                </li>
                               ))}
                             </ul>
                           </div>
@@ -212,11 +221,37 @@ export function Plans() {
                             </ul>
                           </div>
                         )}
+
+                        {plan.subDelegations && plan.subDelegations.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-medium mb-2">Sub-delegations</h4>
+                            <ul className="text-sm space-y-1 list-disc list-inside">
+                              {plan.subDelegations.map((delegation, index) => (
+                                <li key={index} className="text-muted-foreground">
+                                  {delegation.goal}
+                                  <span className="ml-2 text-xs">
+                                    ({delegation.assigneeRoleHint}, cap {formatStepCost(delegation.budgetCap) ?? "—"})
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {(plan.reviewedAt || plan.reviewNote) && (
+                          <div>
+                            <h4 className="text-sm font-medium mb-2">Review</h4>
+                            <div className="text-sm text-muted-foreground space-y-1">
+                              {plan.reviewedAt ? <p>Reviewed on {new Date(plan.reviewedAt).toLocaleString()}</p> : null}
+                              {plan.reviewNote ? <p>{plan.reviewNote}</p> : null}
+                            </div>
+                          </div>
+                        )}
                       </CollapsibleContent>
 
                       {rejectingPlan === plan.id && (
                         <div className="pt-4 border-t border-border space-y-3">
-                          <h4 className="text-sm font-medium">Rejection reason (optional)</h4>
+                          <h4 className="text-sm font-medium">Rejection reason</h4>
                           <Input
                             placeholder="Why is this plan being rejected?"
                             value={rejectReason}
@@ -226,8 +261,8 @@ export function Plans() {
                             <Button
                               variant="destructive"
                               size="sm"
-                              onClick={() => rejectPlan.mutate({ planId: plan.id, reason: rejectReason })}
-                              disabled={rejectPlan.isPending}
+                              onClick={() => rejectPlan.mutate({ planId: plan.id, reviewNote: rejectReason })}
+                              disabled={rejectPlan.isPending || rejectReason.trim().length === 0}
                             >
                               {rejectPlan.isPending ? "Rejecting..." : "Reject plan"}
                             </Button>

@@ -3,17 +3,33 @@ import { api } from "./client";
 export interface IssuePlan {
   id: string;
   companyId: string;
-  issueId: string;
+  issueId: string | null;
+  agentId: string | null;
+  heartbeatRunId: string | null;
   title: string;
-  summary: string;
-  steps: Array<{ order: number; description: string; estimatedMinutes?: number }>;
+  objective: string;
+  steps: Array<{
+    id: string;
+    order: number;
+    description: string;
+    estimatedCost?: number;
+    assigneeRoleHint?: string;
+  }>;
   estimatedCostUsd: string | null;
-  risks: string[];
-  successCriteria: string[];
+  risks: Array<{
+    severity: "low" | "medium" | "high";
+    description: string;
+  }> | null;
+  successCriteria: string[] | null;
+  subDelegations: Array<{
+    goal: string;
+    assigneeRoleHint: string;
+    budgetCap: number;
+  }> | null;
   status: "draft" | "approved" | "rejected" | "superseded";
-  createdByAgentId: string | null;
-  approvedByUserId: string | null;
-  rejectedByUserId: string | null;
+  reviewedByUserId: string | null;
+  reviewNote: string | null;
+  reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -27,6 +43,6 @@ export const plansApi = {
     api.get<IssuePlan>(`/companies/${companyId}/plans/${planId}`),
   approve: (companyId: string, planId: string) =>
     api.post<IssuePlan>(`/companies/${companyId}/plans/${planId}/approve`, {}),
-  reject: (companyId: string, planId: string, reason?: string) =>
-    api.post<IssuePlan>(`/companies/${companyId}/plans/${planId}/reject`, { reason }),
+  reject: (companyId: string, planId: string, reviewNote: string) =>
+    api.post<IssuePlan>(`/companies/${companyId}/plans/${planId}/reject`, { reviewNote }),
 };

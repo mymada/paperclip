@@ -4,12 +4,54 @@ import { agents, approvals, companies, costEvents, issues } from "@paperclipai/d
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
 
+function currentUtcMonthStartIso(now = new Date()) {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
+}
+
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
   return {
+    alertSignals: async (companyId: string) => {
+      const now = new Date();
+      const monthStart = currentUtcMonthStartIso(now);
+
+      const [companyRow, [agentErrorRow], [monthSpendRow]] = await Promise.all([
+        db
+          .select({
+            id: companies.id,
+            budgetMonthlyCents: companies.budgetMonthlyCents,
+          })
+          .from(companies)
+          .where(eq(companies.id, companyId))
+          .then((rows) => rows[0] ?? null),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(agents)
+          .where(and(eq(agents.companyId, companyId), eq(agents.status, "error"))),
+        db
+          .select({ monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
+          .from(costEvents)
+          .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, monthStart))),
+      ]);
+
+      if (!companyRow) throw notFound("Company not found");
+
+      const monthSpendCents = Number(monthSpendRow?.monthSpend ?? 0);
+      const monthBudgetCents = companyRow.budgetMonthlyCents;
+      const monthUtilizationPercent =
+        monthBudgetCents > 0 ? Number(((monthSpendCents / monthBudgetCents) * 100).toFixed(2)) : 0;
+
+      return {
+        agentErrorCount: Number(agentErrorRow?.count ?? 0),
+        monthSpendCents,
+        monthBudgetCents,
+        monthUtilizationPercent,
+      };
+    },
+
     summary: async (companyId: string) => {
       const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const monthStart = currentUtcMonthStartIso(now);
       const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
       const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -19,7 +61,7 @@ export function dashboardService(db: Db) {
         [issuesStats],
         pendingApprovals,
         [monthSpendRow],
-        budgetOverview,
+        budgetStats,
       ] = await Promise.all([
         db.select().from(companies).where(eq(companies.id, companyId)).then((rows) => rows[0] ?? null),
         db.select({ status: agents.status, count: sql<number>`count(*)` })
@@ -46,7 +88,7 @@ export function dashboardService(db: Db) {
         db.select({ monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
           .from(costEvents)
           .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, monthStart))),
-        budgets.overview(companyId),
+        budgets.dashboardStats(companyId),
       ]);
 
       if (!companyRow) throw notFound("Company not found");
@@ -102,10 +144,10 @@ export function dashboardService(db: Db) {
         },
         pendingApprovals,
         budgets: {
-          activeIncidents: budgetOverview.activeIncidents.length,
-          pendingApprovals: budgetOverview.pendingApprovalCount,
-          pausedAgents: budgetOverview.pausedAgentCount,
-          pausedProjects: budgetOverview.pausedProjectCount,
+          activeIncidents: budgetStats.activeIncidents,
+          pendingApprovals: budgetStats.pendingApprovalCount,
+          pausedAgents: budgetStats.pausedAgentCount,
+          pausedProjects: budgetStats.pausedProjectCount,
         },
       };
     },
