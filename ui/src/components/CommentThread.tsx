@@ -341,13 +341,13 @@ function CommentCard({
             <Button
               variant="ghost"
               size="icon-xs"
+              aria-label="Cancel queued action"
               title="Cancel queued action"
               disabled={isInterrupting}
               onClick={() => onInterruptQueued(comment.queueTargetRunId!)}
             >
               <X className="h-3.5 w-3.5 text-destructive" />
-            </Button>
-          )}
+            </Button>          )}
         </span>
       </div>
       {isEditing ? (

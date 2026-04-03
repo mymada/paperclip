@@ -1289,6 +1289,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
+                          aria-label="Remove document"
                           title="Remove document"
                           aria-label="Remove document"
                         >
@@ -1321,6 +1322,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
+                          aria-label="Remove attachment"
                           title="Remove attachment"
                           aria-label="Remove attachment"
                         >
