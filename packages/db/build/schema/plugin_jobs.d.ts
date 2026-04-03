@@ -249,7 +249,7 @@ export declare const pluginJobRuns: import("drizzle-orm/pg-core").PgTableWithCol
             tableName: "plugin_job_runs";
             dataType: "string";
             columnType: "PgText";
-            data: "retry" | "manual" | "schedule";
+            data: "manual" | "schedule" | "retry";
             driverParam: string;
             notNull: true;
             hasDefault: false;
@@ -261,7 +261,7 @@ export declare const pluginJobRuns: import("drizzle-orm/pg-core").PgTableWithCol
             identity: undefined;
             generated: undefined;
         }, {}, {
-            $type: "retry" | "manual" | "schedule";
+            $type: "manual" | "schedule" | "retry";
         }>;
         status: import("drizzle-orm/pg-core").PgColumn<{
             name: "status";

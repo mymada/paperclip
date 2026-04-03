@@ -8,7 +8,7 @@ import { ensurePostgresDatabase } from "./client.js";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
-} from "./embedded-postgres-test-utils.js";
+} from "./test-embedded-postgres.js";
 
 function mkTmpDir() {
   return mkdtempSync(join(tmpdir(), "paperclip-backup-test-"));
@@ -66,13 +66,16 @@ describe("backup-lib", () => {
       "can backup and restore a database with data, enums, and sequences",
       async () => {
         const support = await getEmbeddedPostgresTestSupport();
-        const { connectionString: sourceConn, stop: stopSource } =
-          await startEmbeddedPostgresTestDatabase(support);
-        const { connectionString: restoreConn, stop: stopRestore } =
-          await startEmbeddedPostgresTestDatabase(support);
+        if (!support.supported) {
+          console.warn("Embedded Postgres not supported, skipping test: " + support.reason);
+          return;
+        }
 
-        const sourceSql = postgres(sourceConn);
-        const restoreSql = postgres(restoreConn);
+        const sourceDb = await startEmbeddedPostgresTestDatabase("paperclip-backup-test-source-");
+        const restoreDb = await startEmbeddedPostgresTestDatabase("paperclip-backup-test-restore-");
+
+        const sourceSql = postgres(sourceDb.connectionString);
+        const restoreSql = postgres(restoreDb.connectionString);
 
         const backupDir = mkTmpDir();
 
@@ -89,7 +92,7 @@ describe("backup-lib", () => {
 
           // 2. Run backup
           const backupResult = await runDatabaseBackup({
-            connectionString: sourceConn,
+            connectionString: sourceDb.connectionString,
             backupDir,
             retentionDays: 1,
             filenamePrefix: "test-backup",
@@ -99,7 +102,7 @@ describe("backup-lib", () => {
 
           // 3. Restore to target
           await runDatabaseRestore({
-            connectionString: restoreConn,
+            connectionString: restoreDb.connectionString,
             backupFile: backupResult.backupFile,
           });
 
@@ -122,8 +125,8 @@ describe("backup-lib", () => {
         } finally {
           await sourceSql.end();
           await restoreSql.end();
-          await stopSource();
-          await stopRestore();
+          await sourceDb.cleanup();
+          await restoreDb.cleanup();
           rmSync(backupDir, { recursive: true, force: true });
         }
       },

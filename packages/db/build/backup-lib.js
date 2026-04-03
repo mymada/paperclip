@@ -6,11 +6,11 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync
 import { cp, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { once } from "node:events";
 import postgres from "postgres";
 const streamPipeline = promisify(pipeline);
 const DRIZZLE_SCHEMA = "drizzle";
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
+const DEFAULT_BACKUP_WRITE_BUFFER_BYTES = 1024 * 1024;
 const STATEMENT_BREAKPOINT = "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900";
 function sanitizeRestoreErrorMessage(error) {
     if (error && typeof error === "object") {
@@ -213,6 +213,115 @@ function quoteQualifiedName(schemaName, objectName) {
 function tableKey(schemaName, tableName) {
     return `${schemaName}.${tableName}`;
 }
+export function createBufferedTextFileWriter(filePath, useCompression = false, maxBufferedBytes = DEFAULT_BACKUP_WRITE_BUFFER_BYTES) {
+    const finalFile = useCompression ? `${filePath}.gz` : filePath;
+    const writeStream = createWriteStream(finalFile);
+    const outputStream = useCompression ? createGzip({ level: 6 }) : new PassThrough();
+    // Connect the pipeline: outputStream -> writeStream
+    outputStream.pipe(writeStream);
+    const flushThreshold = Math.max(1, Math.trunc(maxBufferedBytes));
+    let bufferedLines = [];
+    let bufferedBytes = 0;
+    let firstChunk = true;
+    let closed = false;
+    let streamError = null;
+    let pendingWrite = Promise.resolve();
+    outputStream.on("error", (error) => {
+        streamError = error;
+    });
+    const writeChunk = async (chunk) => {
+        if (streamError)
+            throw streamError;
+        const canContinue = outputStream.write(chunk);
+        if (!canContinue) {
+            await new Promise((resolve, reject) => {
+                const handleDrain = () => {
+                    cleanup();
+                    resolve();
+                };
+                const handleError = (error) => {
+                    cleanup();
+                    reject(error);
+                };
+                const cleanup = () => {
+                    outputStream.off("drain", handleDrain);
+                    outputStream.off("error", handleError);
+                };
+                outputStream.once("drain", handleDrain);
+                outputStream.once("error", handleError);
+            });
+        }
+        if (streamError)
+            throw streamError;
+    };
+    const flushBufferedLines = () => {
+        if (bufferedLines.length === 0)
+            return;
+        const linesToWrite = bufferedLines;
+        bufferedLines = [];
+        bufferedBytes = 0;
+        const chunkBody = linesToWrite.join("\n");
+        const chunk = firstChunk ? chunkBody : `\n${chunkBody}`;
+        firstChunk = false;
+        pendingWrite = pendingWrite.then(() => writeChunk(chunk));
+    };
+    return {
+        filePath: finalFile,
+        emit(line) {
+            if (closed) {
+                throw new Error(`Cannot write to closed backup file: ${finalFile}`);
+            }
+            if (streamError)
+                throw streamError;
+            bufferedLines.push(line);
+            bufferedBytes += Buffer.byteLength(line, "utf8") + 1;
+            if (bufferedBytes >= flushThreshold) {
+                flushBufferedLines();
+            }
+        },
+        async close() {
+            if (closed)
+                return;
+            closed = true;
+            flushBufferedLines();
+            await pendingWrite;
+            await new Promise((resolve, reject) => {
+                if (streamError) {
+                    reject(streamError);
+                    return;
+                }
+                outputStream.end((error) => {
+                    if (error)
+                        reject(error);
+                    else {
+                        writeStream.on("finish", resolve);
+                        writeStream.on("error", reject);
+                    }
+                });
+            });
+            if (streamError)
+                throw streamError;
+        },
+        async abort() {
+            if (closed)
+                return;
+            closed = true;
+            bufferedLines = [];
+            bufferedBytes = 0;
+            outputStream.destroy();
+            writeStream.destroy();
+            await pendingWrite.catch(() => { });
+            if (existsSync(finalFile)) {
+                try {
+                    unlinkSync(finalFile);
+                }
+                catch {
+                    // Preserve the original backup failure if temporary file cleanup also fails.
+                }
+            }
+        },
+    };
+}
 export async function runDatabaseBackup(opts) {
     const filenamePrefix = opts.filenamePrefix ?? "paperclip";
     const retentionDays = Math.max(1, Math.trunc(opts.retentionDays));
@@ -223,30 +332,26 @@ export async function runDatabaseBackup(opts) {
     const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
     mkdirSync(opts.backupDir, { recursive: true });
     const useCompression = opts.compression !== false;
-    const sqlFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
-    const finalFile = useCompression ? `${sqlFile}.gz` : sqlFile;
-    const writeStream = createWriteStream(finalFile);
-    const outputStream = useCompression ? createGzip({ level: 6 }) : new PassThrough();
-    // Connect the pipeline: outputStream -> writeStream
-    outputStream.pipe(writeStream);
-    async function emit(text) {
-        if (!outputStream.write(text + "\n")) {
-            await once(outputStream, "drain");
-        }
-    }
-    async function emitStatement(statement) {
-        await emit(statement);
-        await emit(STATEMENT_BREAKPOINT);
-    }
+    const backupFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
+    const writer = createBufferedTextFileWriter(backupFile, useCompression);
+    const finalFile = writer.filePath;
     try {
         await sql `SELECT 1`;
-        await emit("-- Paperclip database backup");
-        await emit(`-- Created: ${new Date().toISOString()}`);
-        await emit("");
-        await emitStatement("BEGIN;");
-        await emitStatement("SET LOCAL session_replication_role = replica;");
-        await emitStatement("SET LOCAL client_min_messages = warning;");
-        await emit("");
+        const emit = (line) => writer.emit(line);
+        const emitStatement = (statement) => {
+            emit(statement);
+            emit(STATEMENT_BREAKPOINT);
+        };
+        const emitStatementBoundary = () => {
+            emit(STATEMENT_BREAKPOINT);
+        };
+        emit("-- Paperclip database backup");
+        emit(`-- Created: ${new Date().toISOString()}`);
+        emit("");
+        emitStatement("BEGIN;");
+        emitStatement("SET LOCAL session_replication_role = replica;");
+        emitStatement("SET LOCAL client_min_messages = warning;");
+        emit("");
         const allTables = await sql `
       SELECT table_schema AS schema_name, table_name AS tablename
       FROM information_schema.tables
@@ -537,9 +642,7 @@ export async function runDatabaseBackup(opts) {
         }
         await emitStatement("COMMIT;");
         await emit("");
-        // End of stream
-        outputStream.end();
-        await once(writeStream, "finish");
+        await writer.close();
         const sizeBytes = statSync(finalFile).size;
         const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
         return {
@@ -548,12 +651,9 @@ export async function runDatabaseBackup(opts) {
             prunedCount,
         };
     }
-    catch (err) {
-        outputStream.destroy();
-        writeStream.destroy();
-        if (existsSync(finalFile))
-            unlinkSync(finalFile);
-        throw err;
+    catch (error) {
+        await writer.abort();
+        throw error;
     }
     finally {
         await sql.end();

@@ -1,10 +1,10 @@
-export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWithColumns<{
-    name: "document_revisions";
+export declare const feedbackVotes: import("drizzle-orm/pg-core").PgTableWithColumns<{
+    name: "feedback_votes";
     schema: undefined;
     columns: {
         id: import("drizzle-orm/pg-core").PgColumn<{
             name: "id";
-            tableName: "document_revisions";
+            tableName: "feedback_votes";
             dataType: "string";
             columnType: "PgUUID";
             data: string;
@@ -21,7 +21,7 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
         }, {}, {}>;
         companyId: import("drizzle-orm/pg-core").PgColumn<{
             name: "company_id";
-            tableName: "document_revisions";
+            tableName: "feedback_votes";
             dataType: "string";
             columnType: "PgUUID";
             data: string;
@@ -36,9 +36,9 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        documentId: import("drizzle-orm/pg-core").PgColumn<{
-            name: "document_id";
-            tableName: "document_revisions";
+        issueId: import("drizzle-orm/pg-core").PgColumn<{
+            name: "issue_id";
+            tableName: "feedback_votes";
             dataType: "string";
             columnType: "PgUUID";
             data: string;
@@ -53,26 +53,77 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        revisionNumber: import("drizzle-orm/pg-core").PgColumn<{
-            name: "revision_number";
-            tableName: "document_revisions";
-            dataType: "number";
-            columnType: "PgInteger";
-            data: number;
-            driverParam: string | number;
+        targetType: import("drizzle-orm/pg-core").PgColumn<{
+            name: "target_type";
+            tableName: "feedback_votes";
+            dataType: "string";
+            columnType: "PgText";
+            data: string;
+            driverParam: string;
             notNull: true;
             hasDefault: false;
             isPrimaryKey: false;
             isAutoincrement: false;
             hasRuntimeDefault: false;
-            enumValues: undefined;
+            enumValues: [string, ...string[]];
             baseColumn: never;
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        title: import("drizzle-orm/pg-core").PgColumn<{
-            name: "title";
-            tableName: "document_revisions";
+        targetId: import("drizzle-orm/pg-core").PgColumn<{
+            name: "target_id";
+            tableName: "feedback_votes";
+            dataType: "string";
+            columnType: "PgText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        authorUserId: import("drizzle-orm/pg-core").PgColumn<{
+            name: "author_user_id";
+            tableName: "feedback_votes";
+            dataType: "string";
+            columnType: "PgText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        vote: import("drizzle-orm/pg-core").PgColumn<{
+            name: "vote";
+            tableName: "feedback_votes";
+            dataType: "string";
+            columnType: "PgText";
+            data: string;
+            driverParam: string;
+            notNull: true;
+            hasDefault: false;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: [string, ...string[]];
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        reason: import("drizzle-orm/pg-core").PgColumn<{
+            name: "reason";
+            tableName: "feedback_votes";
             dataType: "string";
             columnType: "PgText";
             data: string;
@@ -87,63 +138,29 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        format: import("drizzle-orm/pg-core").PgColumn<{
-            name: "format";
-            tableName: "document_revisions";
-            dataType: "string";
-            columnType: "PgText";
-            data: string;
-            driverParam: string;
+        sharedWithLabs: import("drizzle-orm/pg-core").PgColumn<{
+            name: "shared_with_labs";
+            tableName: "feedback_votes";
+            dataType: "boolean";
+            columnType: "PgBoolean";
+            data: boolean;
+            driverParam: boolean;
             notNull: true;
             hasDefault: true;
             isPrimaryKey: false;
             isAutoincrement: false;
             hasRuntimeDefault: false;
-            enumValues: [string, ...string[]];
+            enumValues: undefined;
             baseColumn: never;
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        body: import("drizzle-orm/pg-core").PgColumn<{
-            name: "body";
-            tableName: "document_revisions";
-            dataType: "string";
-            columnType: "PgText";
-            data: string;
-            driverParam: string;
-            notNull: true;
-            hasDefault: false;
-            isPrimaryKey: false;
-            isAutoincrement: false;
-            hasRuntimeDefault: false;
-            enumValues: [string, ...string[]];
-            baseColumn: never;
-            identity: undefined;
-            generated: undefined;
-        }, {}, {}>;
-        changeSummary: import("drizzle-orm/pg-core").PgColumn<{
-            name: "change_summary";
-            tableName: "document_revisions";
-            dataType: "string";
-            columnType: "PgText";
-            data: string;
-            driverParam: string;
-            notNull: false;
-            hasDefault: false;
-            isPrimaryKey: false;
-            isAutoincrement: false;
-            hasRuntimeDefault: false;
-            enumValues: [string, ...string[]];
-            baseColumn: never;
-            identity: undefined;
-            generated: undefined;
-        }, {}, {}>;
-        createdByAgentId: import("drizzle-orm/pg-core").PgColumn<{
-            name: "created_by_agent_id";
-            tableName: "document_revisions";
-            dataType: "string";
-            columnType: "PgUUID";
-            data: string;
+        sharedAt: import("drizzle-orm/pg-core").PgColumn<{
+            name: "shared_at";
+            tableName: "feedback_votes";
+            dataType: "date";
+            columnType: "PgTimestamp";
+            data: Date;
             driverParam: string;
             notNull: false;
             hasDefault: false;
@@ -155,9 +172,9 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        createdByUserId: import("drizzle-orm/pg-core").PgColumn<{
-            name: "created_by_user_id";
-            tableName: "document_revisions";
+        consentVersion: import("drizzle-orm/pg-core").PgColumn<{
+            name: "consent_version";
+            tableName: "feedback_votes";
             dataType: "string";
             columnType: "PgText";
             data: string;
@@ -172,13 +189,13 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
             identity: undefined;
             generated: undefined;
         }, {}, {}>;
-        createdByRunId: import("drizzle-orm/pg-core").PgColumn<{
-            name: "created_by_run_id";
-            tableName: "document_revisions";
-            dataType: "string";
-            columnType: "PgUUID";
-            data: string;
-            driverParam: string;
+        redactionSummary: import("drizzle-orm/pg-core").PgColumn<{
+            name: "redaction_summary";
+            tableName: "feedback_votes";
+            dataType: "json";
+            columnType: "PgJsonb";
+            data: unknown;
+            driverParam: unknown;
             notNull: false;
             hasDefault: false;
             isPrimaryKey: false;
@@ -191,7 +208,24 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
         }, {}, {}>;
         createdAt: import("drizzle-orm/pg-core").PgColumn<{
             name: "created_at";
-            tableName: "document_revisions";
+            tableName: "feedback_votes";
+            dataType: "date";
+            columnType: "PgTimestamp";
+            data: Date;
+            driverParam: string;
+            notNull: true;
+            hasDefault: true;
+            isPrimaryKey: false;
+            isAutoincrement: false;
+            hasRuntimeDefault: false;
+            enumValues: undefined;
+            baseColumn: never;
+            identity: undefined;
+            generated: undefined;
+        }, {}, {}>;
+        updatedAt: import("drizzle-orm/pg-core").PgColumn<{
+            name: "updated_at";
+            tableName: "feedback_votes";
             dataType: "date";
             columnType: "PgTimestamp";
             data: Date;
@@ -209,4 +243,4 @@ export declare const documentRevisions: import("drizzle-orm/pg-core").PgTableWit
     };
     dialect: "pg";
 }>;
-//# sourceMappingURL=document_revisions.d.ts.map
+//# sourceMappingURL=feedback_votes.d.ts.map
