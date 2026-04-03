@@ -64,5 +64,6 @@ export const backupApi = {
   trigger: () => api.post<{ message: string }>("/backup/trigger", {}),
   restore: (name: string) => api.post<{ message: string; restored: string[]; skipped?: string[] }>(`/backup/${encodeURIComponent(name)}/restore`, {}),
   delete: (name: string) => api.delete<{ message: string }>(`/backup/${encodeURIComponent(name)}`),
+  bulkDelete: (names: string[]) => api.delete<{ deleted: string[]; errors: string[] }>("/backup", { names }),
   downloadUrl: (name: string) => `/api/backup/${encodeURIComponent(name)}/download`,
 };

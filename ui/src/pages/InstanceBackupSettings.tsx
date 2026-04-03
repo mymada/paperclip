@@ -5,6 +5,7 @@ import { backupApi, type BackupEntry } from "@/api/backup";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 
 function formatBytes(bytes: number): string {
@@ -26,10 +27,16 @@ function StatusDot({ ok }: { ok: boolean }) {
   );
 }
 
-function BackupRow({ entry, onRestore, onDelete }: { entry: BackupEntry; onRestore: (name: string) => void; onDelete: (name: string) => void }) {
+function BackupRow({ entry, selected, onToggleSelect, onRestore, onDelete }: { entry: BackupEntry; selected: boolean; onToggleSelect: (name: string) => void; onRestore: (name: string) => void; onDelete: (name: string) => void }) {
   const date = new Date(entry.createdAt);
   return (
     <div className="flex items-center gap-3 px-3 py-2 text-sm">
+      <Checkbox
+        checked={selected}
+        onCheckedChange={() => onToggleSelect(entry.name)}
+        aria-label={`Select ${entry.name}`}
+        className="shrink-0"
+      />
       <Archive className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
       <span className="font-mono text-xs text-muted-foreground truncate flex-1" title={entry.path}>
         {entry.name}
@@ -83,6 +90,8 @@ export function InstanceBackupSettings() {
   const [restoreMessage, setRestoreMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [selectedBackups, setSelectedBackups] = useState<Set<string>>(new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([
@@ -122,6 +131,35 @@ export function InstanceBackupSettings() {
       setTimeout(() => setRestoreMessage(null), 10000);
     },
   });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (names: string[]) => backupApi.bulkDelete(names),
+    onSuccess: () => {
+      setSelectedBackups(new Set());
+      setConfirmBulkDelete(false);
+      void queryClient.invalidateQueries({ queryKey: ["backup"] });
+    },
+    onError: (err) => {
+      setRestoreMessage({ text: err instanceof Error ? err.message : "Bulk delete failed.", isError: true });
+      setConfirmBulkDelete(false);
+      setTimeout(() => setRestoreMessage(null), 10000);
+    },
+  });
+
+  function handleToggleSelect(name: string) {
+    setSelectedBackups((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function handleToggleAll(all: BackupEntry[]) {
+    setSelectedBackups((prev) =>
+      prev.size === all.length ? new Set() : new Set(all.map((e) => e.name)),
+    );
+  }
 
   const restoreMutation = useMutation({
     mutationFn: (name: string) => backupApi.restore(name),
@@ -379,14 +417,59 @@ export function InstanceBackupSettings() {
                   ({data.totalBackups} — {formatBytes(data.totalSizeBytes)} total)
                 </span>
               </div>
-              <button
-                type="button"
-                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                onClick={() => void queryClient.invalidateQueries({ queryKey: ["backup"] })}
-              >
-                <RefreshCw className="h-3 w-3" /> Refresh
-              </button>
+              <div className="flex items-center gap-2">
+                {selectedBackups.size > 0 && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 text-xs gap-1"
+                    onClick={() => setConfirmBulkDelete(true)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Delete {selectedBackups.size} selected
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                  onClick={() => void queryClient.invalidateQueries({ queryKey: ["backup"] })}
+                >
+                  <RefreshCw className="h-3 w-3" /> Refresh
+                </button>
+              </div>
             </div>
+
+            {/* Bulk delete confirmation */}
+            {confirmBulkDelete && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 space-y-3">
+                <p className="text-sm font-semibold text-destructive">Confirm bulk deletion</p>
+                <p className="text-xs text-muted-foreground">
+                  This will permanently delete{" "}
+                  <span className="font-semibold">{selectedBackups.size} backup{selectedBackups.size > 1 ? "s" : ""}</span>.{" "}
+                  This action cannot be undone.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 text-xs"
+                    disabled={bulkDeleteMutation.isPending}
+                    onClick={() => bulkDeleteMutation.mutate([...selectedBackups])}
+                  >
+                    {bulkDeleteMutation.isPending ? <><RefreshCw className="h-3 w-3 animate-spin mr-1" /> Deleting…</> : "Yes, delete all"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={bulkDeleteMutation.isPending}
+                    onClick={() => setConfirmBulkDelete(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {backups.length === 0 ? (
               <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
@@ -396,8 +479,26 @@ export function InstanceBackupSettings() {
             ) : (
               <Card>
                 <CardContent className="p-0 divide-y">
+                  <div className="flex items-center gap-3 px-3 py-2 border-b border-border bg-muted/20">
+                    <Checkbox
+                      checked={selectedBackups.size === backups.length && backups.length > 0}
+                      onCheckedChange={() => handleToggleAll(backups)}
+                      aria-label="Select all backups"
+                      className="shrink-0"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {selectedBackups.size > 0 ? `${selectedBackups.size} selected` : "Select all"}
+                    </span>
+                  </div>
                   {backups.map((entry) => (
-                    <BackupRow key={entry.name} entry={entry} onRestore={handleRestoreClick} onDelete={handleDeleteClick} />
+                    <BackupRow
+                      key={entry.name}
+                      entry={entry}
+                      selected={selectedBackups.has(entry.name)}
+                      onToggleSelect={handleToggleSelect}
+                      onRestore={handleRestoreClick}
+                      onDelete={handleDeleteClick}
+                    />
                   ))}
                 </CardContent>
               </Card>

@@ -9,9 +9,9 @@ export function dashboardService(db: Db) {
   return {
     summary: async (companyId: string) => {
       const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
       const [
         companyRow,

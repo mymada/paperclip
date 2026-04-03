@@ -16,6 +16,7 @@ import {
   reconcilePendingMigrationHistory,
   formatDatabaseBackupResult,
   runDatabaseBackup,
+  runFullBackup,
   authUsers,
   companies,
   companyMemberships,
@@ -26,11 +27,20 @@ import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
-import { heartbeatService, mcpBridgeService, reconcilePersistedRuntimeServicesOnStartup, routineService } from "./services/index.js";
+import {
+  feedbackService,
+  heartbeatService,
+  mcpBridgeService,
+  reconcilePersistedRuntimeServicesOnStartup,
+  routineService,
+} from "./services/index.js";
+import { createFeedbackTraceShareClientFromConfig } from "./services/feedback-share-client.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { resolvePaperclipInstanceRoot } from "./home-paths.js";
+import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
+import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -102,7 +112,8 @@ export interface StartedServer {
 }
 
 export async function startServer(): Promise<StartedServer> {
-  const config = loadConfig();
+  let config = loadConfig();
+  initTelemetry({ enabled: config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
     process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -515,10 +526,14 @@ export async function startServer(): Promise<StartedServer> {
   const listenPort = await detectPort(config.port);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
+  const feedback = feedbackService(db as any, {
+    shareClient: createFeedbackTraceShareClientFromConfig(config) ?? undefined,
+  });
   const app = await createApp(db as any, {
     uiMode,
     serverPort: listenPort,
     storageService,
+    feedbackExportService: feedback,
     deploymentMode: config.deploymentMode,
     deploymentExposure: config.deploymentExposure,
     allowedHostnames: config.allowedHostnames,
@@ -647,31 +662,54 @@ export async function startServer(): Promise<StartedServer> {
 
       backupInFlight = true;
       try {
-        const result = await runDatabaseBackup({
+        const instanceRoot = resolvePaperclipInstanceRoot();
+        const result = await runFullBackup({
           connectionString: activeDatabaseConnectionString,
           backupDir: config.databaseBackupDir,
-          retentionDays: config.databaseBackupRetentionDays,
           filenamePrefix: "paperclip",
+          compression: config.databaseBackupCompression,
+          instanceRoot,
+          skillsDir: resolve(instanceRoot, "skills"),
+          projectsDir: resolve(instanceRoot, "projects"),
+          workspacesDir: resolve(instanceRoot, "workspaces"),
+          storageDir: resolve(instanceRoot, "data", "storage"),
+          secretsDir: resolve(instanceRoot, "secrets"),
+          configFile: resolve(instanceRoot, "config.json"),
+          includeFiles: {
+            skills: config.databaseBackupIncludeSkills,
+            projects: config.databaseBackupIncludeProjects,
+            workspaces: config.databaseBackupIncludeWorkspaces,
+            storage: config.databaseBackupIncludeStorage,
+            secrets: config.databaseBackupIncludeSecrets,
+            config: config.databaseBackupIncludeConfig,
+          },
+          gfs: {
+            enabled: config.databaseBackupGfsEnabled,
+            hourlyCount: config.databaseBackupGfsHourlyCount,
+            dailyCount: config.databaseBackupGfsDailyCount,
+            weeklyCount: config.databaseBackupGfsWeeklyCount,
+          },
         });
         lastBackupResult = {
           completedAt: new Date(),
-          backupDir: config.databaseBackupDir,
-          dbSizeBytes: result.sizeBytes,
-          filesSizeBytes: 0,
-          totalSizeBytes: result.sizeBytes,
+          backupDir: result.backupDir,
+          dbSizeBytes: result.dbSizeBytes,
+          filesSizeBytes: result.filesSizeBytes,
+          totalSizeBytes: result.totalSizeBytes,
           prunedCount: result.prunedCount,
-          includedDirs: ["db"],
+          includedDirs: result.includedDirs,
         };
         lastBackupError = null;
         logger.info(
           {
-            backupFile: result.backupFile,
-            sizeBytes: result.sizeBytes,
+            backupDir: result.backupDir,
+            dbSizeBytes: result.dbSizeBytes,
+            filesSizeBytes: result.filesSizeBytes,
+            totalSizeBytes: result.totalSizeBytes,
             prunedCount: result.prunedCount,
-            backupDir: config.databaseBackupDir,
-            retentionDays: config.databaseBackupRetentionDays,
+            includedDirs: result.includedDirs,
           },
-          `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
+          `Automatic full backup complete`,
         );
       } catch (err) {
         lastBackupError = {
@@ -763,18 +801,26 @@ export async function startServer(): Promise<StartedServer> {
     });
   });
   
-  if (embeddedPostgres && embeddedPostgresStartedByThisProcess) {
+  {
     const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
-      logger.info({ signal }, "Stopping embedded PostgreSQL");
-      try {
-        await embeddedPostgres?.stop();
-      } catch (err) {
-        logger.error({ err }, "Failed to stop embedded PostgreSQL cleanly");
-      } finally {
-        process.exit(0);
+      const telemetryClient = getTelemetryClient();
+      if (telemetryClient) {
+        telemetryClient.stop();
+        await telemetryClient.flush();
       }
+
+      if (embeddedPostgres && embeddedPostgresStartedByThisProcess) {
+        logger.info({ signal }, "Stopping embedded PostgreSQL");
+        try {
+          await embeddedPostgres?.stop();
+        } catch (err) {
+          logger.error({ err }, "Failed to stop embedded PostgreSQL cleanly");
+        }
+      }
+
+      process.exit(0);
     };
-  
+
     process.once("SIGINT", () => {
       void shutdown("SIGINT");
     });

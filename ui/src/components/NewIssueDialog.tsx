@@ -348,6 +348,7 @@ export function NewIssueDialog() {
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
     enabled: newIssueOpen,
+    retry: false,
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
   const activeProjects = useMemo(
@@ -1288,6 +1289,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
+                          aria-label="Remove document"
                           title="Remove document"
                         >
                           <X className="h-3.5 w-3.5" />
@@ -1319,6 +1321,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
+                          aria-label="Remove attachment"
                           title="Remove attachment"
                         >
                           <X className="h-3.5 w-3.5" />

@@ -45,6 +45,21 @@ function defaultConfig(): PaperclipConfig {
         intervalMinutes: 60,
         retentionDays: 30,
         dir: resolveDefaultBackupDir(instanceId),
+        compression: true,
+        includeFiles: {
+          skills: true,
+          projects: true,
+          workspaces: true,
+          storage: true,
+          secrets: true,
+          config: true,
+        },
+        gfs: {
+          enabled: true,
+          hourlyCount: 24,
+          dailyCount: 7,
+          weeklyCount: 4,
+        },
       },
     },
     logging: {
@@ -62,6 +77,9 @@ function defaultConfig(): PaperclipConfig {
     auth: {
       baseUrlMode: "auto",
       disableSignUp: false,
+    },
+    telemetry: {
+      enabled: true,
     },
     storage: defaultStorageConfig(),
     secrets: defaultSecretsConfig(),

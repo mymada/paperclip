@@ -11,8 +11,7 @@ const plugin = definePlugin({
          scopeKind: "issue",
          scopeId: issueId,
          stateKey: "seen",
-         value: true
-       });
+       }, true);
     });
 
     ctx.events.on("issue.updated", async (event) => {

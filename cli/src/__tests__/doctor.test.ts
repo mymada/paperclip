@@ -28,6 +28,21 @@ function createTempConfig(): string {
         intervalMinutes: 60,
         retentionDays: 30,
         dir: path.join(runtimeRoot, "backups"),
+        compression: true,
+        includeFiles: {
+          skills: true,
+          projects: true,
+          workspaces: true,
+          storage: true,
+          secrets: true,
+          config: true,
+        },
+        gfs: {
+          enabled: true,
+          hourlyCount: 24,
+          dailyCount: 7,
+          weeklyCount: 4,
+        },
       },
     },
     logging: {
@@ -45,6 +60,9 @@ function createTempConfig(): string {
     auth: {
       baseUrlMode: "auto",
       disableSignUp: false,
+    },
+    telemetry: {
+      enabled: true,
     },
     storage: {
       provider: "local_disk",
