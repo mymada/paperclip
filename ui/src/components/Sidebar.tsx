@@ -15,6 +15,10 @@ import {
   GitBranch,
   Repeat,
   Boxes,
+  ClipboardList,
+  Radio,
+  BookOpen,
+  Bell,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -132,6 +136,7 @@ export function Sidebar() {
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
           <SidebarNavItem to="/parcours" label="Parcours" icon={GitBranch} />
           <SidebarNavItem to="/routines" label="Routines" icon={Repeat} badge="Beta" badgeTone="warning" />
+          <SidebarNavItem to="/plans" label="Plans" icon={ClipboardList} />
           <SidebarNavItem to="/goals" label="Goals" icon={Target} />
           <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
         </SidebarSection>
@@ -145,6 +150,9 @@ export function Sidebar() {
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
           <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
           <SidebarNavItem to="/activity" label="Activity" icon={History} />
+          <SidebarNavItem to="/channels" label="Canaux" icon={Radio} />
+          <SidebarNavItem to="/company-lessons" label="Leçons IA" icon={BookOpen} />
+          <SidebarNavItem to="/notification-rules" label="Notifications" icon={Bell} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
         </SidebarSection>
 

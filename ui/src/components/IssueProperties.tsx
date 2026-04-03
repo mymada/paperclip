@@ -507,6 +507,33 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           />
         </PropertyRow>
 
+        <PropertyRow label="Plan requis">
+          <div className="flex items-center gap-1">
+            {[0, 1, 2, 3].map((tier) => (
+              <button
+                key={tier}
+                className={cn(
+                  "text-xs px-2 py-0.5 rounded border transition-colors",
+                  issue.proofRequirementTier === tier
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:bg-accent/50"
+                )}
+                onClick={() => onUpdate({ proofRequirementTier: tier })}
+              >
+                {tier === 0 ? "Aucun" : tier === 1 ? "Faible" : tier === 2 ? "Moyen" : "Élevé"}
+              </button>
+            ))}
+            {issue.proofRequirementTier !== null && issue.proofRequirementTier !== 0 && (
+              <button
+                className="text-xs text-muted-foreground hover:text-foreground px-1"
+                onClick={() => onUpdate({ proofRequirementTier: null })}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </PropertyRow>
+
         <PropertyPicker
           inline={inline}
           label="Labels"
