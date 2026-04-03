@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import fs from "node:fs";
+import { promises as fsPromises } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Db } from "@paperclipai/db";
@@ -464,7 +464,7 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
     const instructionsPath = (config as any).instructionsFilePath;
     if (instructionsPath && typeof instructionsPath === "string") {
       try {
-        const instructions = fs.readFileSync(instructionsPath, "utf-8");
+        const instructions = await fsPromises.readFile(instructionsPath, "utf-8");
         systemPrompt = instructions;
       } catch {
         // Fall back to default
@@ -657,21 +657,22 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
   // board-member skill as the system prompt instead of the CEO agent's
   // prompt. Allows the board to manage their company from the web UI chat.
 
-  let _boardSkillCache: string | null = null;
+  let _boardSkillPromise: Promise<string> | null = null;
 
-  function loadBoardSkill(): string {
-    if (_boardSkillCache) return _boardSkillCache;
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const skillPath = path.resolve(__dirname, "../../../skills/paperclip-board/SKILL.md");
-    try {
-      let content = fs.readFileSync(skillPath, "utf-8");
-      // Strip YAML frontmatter
-      content = content.replace(/^---[\s\S]*?---\s*\n/, "");
-      _boardSkillCache = content;
-      return content;
-    } catch {
-      return "You are a board-level assistant helping a human manage their AI-agent company through Paperclip. Help them create companies, hire agents, approve tasks, and monitor their organization.";
+  function loadBoardSkill(): Promise<string> {
+    if (!_boardSkillPromise) {
+      const __dirname = path.dirname(fileURLToPath(import.meta.url));
+      const skillPath = path.resolve(__dirname, "../../../skills/paperclip-board/SKILL.md");
+      _boardSkillPromise = fsPromises.readFile(skillPath, "utf-8")
+        .then((content) => {
+          // Strip YAML frontmatter
+          return content.replace(/^---[\s\S]*?---\s*\n/, "");
+        })
+        .catch(() => {
+          return "You are a board-level assistant helping a human manage their AI-agent company through Paperclip. Help them create companies, hire agents, approve tasks, and monitor their organization.";
+        });
     }
+    return _boardSkillPromise;
   }
 
   router.post("/board/chat/stream", async (req, res) => {
@@ -731,7 +732,7 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
       .join("\n\n");
 
     // Load board skill as system prompt
-    const systemPrompt = loadBoardSkill();
+    const systemPrompt = await loadBoardSkill();
 
     // Compose prompt with conversation history
     const prompt = history
