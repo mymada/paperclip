@@ -12,31 +12,34 @@ export function sidebarBadgeService(db: Db) {
       companyId: string,
       extra?: { joinRequests?: number; unreadTouchedIssues?: number },
     ): Promise<SidebarBadges> => {
-      const actionableApprovals = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(approvals)
-        .where(
-          and(
-            eq(approvals.companyId, companyId),
-            inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
-          ),
-        )
-        .then((rows) => Number(rows[0]?.count ?? 0));
+      // ⚡ Bolt: Execute independent queries concurrently to minimize total latency.
+      const [actionableApprovals, latestRunByAgent] = await Promise.all([
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(approvals)
+          .where(
+            and(
+              eq(approvals.companyId, companyId),
+              inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
+            ),
+          )
+          .then((rows) => Number(rows[0]?.count ?? 0)),
 
-      const latestRunByAgent = await db
-        .selectDistinctOn([heartbeatRuns.agentId], {
-          runStatus: heartbeatRuns.status,
-        })
-        .from(heartbeatRuns)
-        .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-        .where(
-          and(
-            eq(heartbeatRuns.companyId, companyId),
-            eq(agents.companyId, companyId),
-            not(eq(agents.status, "terminated")),
-          ),
-        )
-        .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));
+        db
+          .selectDistinctOn([heartbeatRuns.agentId], {
+            runStatus: heartbeatRuns.status,
+          })
+          .from(heartbeatRuns)
+          .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
+          .where(
+            and(
+              eq(heartbeatRuns.companyId, companyId),
+              eq(agents.companyId, companyId),
+              not(eq(agents.status, "terminated")),
+            ),
+          )
+          .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt)),
+      ]);
 
       const failedRuns = latestRunByAgent.filter((row) =>
         FAILED_HEARTBEAT_STATUSES.includes(row.runStatus),
