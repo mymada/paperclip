@@ -100,6 +100,7 @@ type TableDefinition = {
 
 const DRIZZLE_SCHEMA = "drizzle";
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
+const DEFAULT_BACKUP_WRITE_BUFFER_BYTES = 1024 * 1024;
 
 const STATEMENT_BREAKPOINT = "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900";
 
@@ -311,6 +312,113 @@ function tableKey(schemaName: string, tableName: string): string {
   return `${schemaName}.${tableName}`;
 }
 
+export function createBufferedTextFileWriter(filePath: string, useCompression = false, maxBufferedBytes = DEFAULT_BACKUP_WRITE_BUFFER_BYTES) {
+  const finalFile = useCompression ? `${filePath}.gz` : filePath;
+  const writeStream = createWriteStream(finalFile);
+  const outputStream = useCompression ? createGzip({ level: 6 }) : new PassThrough();
+
+  // Connect the pipeline: outputStream -> writeStream
+  outputStream.pipe(writeStream);
+
+  const flushThreshold = Math.max(1, Math.trunc(maxBufferedBytes));
+  let bufferedLines: string[] = [];
+  let bufferedBytes = 0;
+  let firstChunk = true;
+  let closed = false;
+  let streamError: Error | null = null;
+  let pendingWrite = Promise.resolve();
+
+  outputStream.on("error", (error) => {
+    streamError = error;
+  });
+
+  const writeChunk = async (chunk: string): Promise<void> => {
+    if (streamError) throw streamError;
+    const canContinue = outputStream.write(chunk);
+    if (!canContinue) {
+      await new Promise<void>((resolve, reject) => {
+        const handleDrain = () => {
+          cleanup();
+          resolve();
+        };
+        const handleError = (error: Error) => {
+          cleanup();
+          reject(error);
+        };
+        const cleanup = () => {
+          outputStream.off("drain", handleDrain);
+          outputStream.off("error", handleError);
+        };
+        outputStream.once("drain", handleDrain);
+        outputStream.once("error", handleError);
+      });
+    }
+    if (streamError) throw streamError;
+  };
+
+  const flushBufferedLines = () => {
+    if (bufferedLines.length === 0) return;
+    const linesToWrite = bufferedLines;
+    bufferedLines = [];
+    bufferedBytes = 0;
+    const chunkBody = linesToWrite.join("\n");
+    const chunk = firstChunk ? chunkBody : `\n${chunkBody}`;
+    firstChunk = false;
+    pendingWrite = pendingWrite.then(() => writeChunk(chunk));
+  };
+
+  return {
+    filePath: finalFile,
+    emit(line: string) {
+      if (closed) {
+        throw new Error(`Cannot write to closed backup file: ${finalFile}`);
+      }
+      if (streamError) throw streamError;
+      bufferedLines.push(line);
+      bufferedBytes += Buffer.byteLength(line, "utf8") + 1;
+      if (bufferedBytes >= flushThreshold) {
+        flushBufferedLines();
+      }
+    },
+    async close() {
+      if (closed) return;
+      closed = true;
+      flushBufferedLines();
+      await pendingWrite;
+      await new Promise<void>((resolve, reject) => {
+        if (streamError) {
+          reject(streamError);
+          return;
+        }
+        outputStream.end((error?: Error | null) => {
+          if (error) reject(error);
+          else {
+            writeStream.on("finish", resolve);
+            writeStream.on("error", reject);
+          }
+        });
+      });
+      if (streamError) throw streamError;
+    },
+    async abort() {
+      if (closed) return;
+      closed = true;
+      bufferedLines = [];
+      bufferedBytes = 0;
+      outputStream.destroy();
+      writeStream.destroy();
+      await pendingWrite.catch(() => {});
+      if (existsSync(finalFile)) {
+        try {
+          unlinkSync(finalFile);
+        } catch {
+          // Preserve the original backup failure if temporary file cleanup also fails.
+        }
+      }
+    },
+  };
+}
+
 export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise<RunDatabaseBackupResult> {
   const filenamePrefix = opts.filenamePrefix ?? "paperclip";
   const retentionDays = Math.max(1, Math.trunc(opts.retentionDays));
@@ -320,39 +428,31 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   const nullifiedColumnsByTable = normalizeNullifyColumnMap(opts.nullifyColumns);
   
   const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
-
   mkdirSync(opts.backupDir, { recursive: true });
   const useCompression = opts.compression !== false;
-  const sqlFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
-  const finalFile = useCompression ? `${sqlFile}.gz` : sqlFile;
-
-  const writeStream = createWriteStream(finalFile);
-  const outputStream = useCompression ? createGzip({ level: 6 }) : new PassThrough();
-  
-  // Connect the pipeline: outputStream -> writeStream
-  outputStream.pipe(writeStream);
-
-  async function emit(text: string) {
-    if (!outputStream.write(text + "\n")) {
-      await once(outputStream, "drain");
-    }
-  }
-
-  async function emitStatement(statement: string) {
-    await emit(statement);
-    await emit(STATEMENT_BREAKPOINT);
-  }
+  const backupFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
+  const writer = createBufferedTextFileWriter(backupFile, useCompression);
+  const finalFile = writer.filePath;
 
   try {
     await sql`SELECT 1`;
 
-    await emit("-- Paperclip database backup");
-    await emit(`-- Created: ${new Date().toISOString()}`);
-    await emit("");
-    await emitStatement("BEGIN;");
-    await emitStatement("SET LOCAL session_replication_role = replica;");
-    await emitStatement("SET LOCAL client_min_messages = warning;");
-    await emit("");
+    const emit = (line: string) => writer.emit(line);
+    const emitStatement = (statement: string) => {
+      emit(statement);
+      emit(STATEMENT_BREAKPOINT);
+    };
+    const emitStatementBoundary = () => {
+      emit(STATEMENT_BREAKPOINT);
+    };
+
+    emit("-- Paperclip database backup");
+    emit(`-- Created: ${new Date().toISOString()}`);
+    emit("");
+    emitStatement("BEGIN;");
+    emitStatement("SET LOCAL session_replication_role = replica;");
+    emitStatement("SET LOCAL client_min_messages = warning;");
+    emit("");
 
     const allTables = await sql<TableDefinition[]>`
       SELECT table_schema AS schema_name, table_name AS tablename
@@ -692,9 +792,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     await emitStatement("COMMIT;");
     await emit("");
 
-    // End of stream
-    outputStream.end();
-    await once(writeStream, "finish");
+    await writer.close();
 
     const sizeBytes = statSync(finalFile).size;
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
@@ -704,11 +802,9 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       sizeBytes,
       prunedCount,
     };
-  } catch (err) {
-    outputStream.destroy();
-    writeStream.destroy();
-    if (existsSync(finalFile)) unlinkSync(finalFile);
-    throw err;
+  } catch (error) {
+    await writer.abort();
+    throw error;
   } finally {
     await sql.end();
   }
