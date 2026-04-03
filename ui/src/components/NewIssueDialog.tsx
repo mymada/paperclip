@@ -1291,7 +1291,6 @@ export function NewIssueDialog() {
                           disabled={createIssue.isPending}
                           aria-label="Remove document"
                           title="Remove document"
-                          aria-label="Remove document"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -1324,7 +1323,6 @@ export function NewIssueDialog() {
                           disabled={createIssue.isPending}
                           aria-label="Remove attachment"
                           title="Remove attachment"
-                          aria-label="Remove attachment"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
