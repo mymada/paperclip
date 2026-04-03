@@ -37,13 +37,15 @@ async function readManifest(backupPath: string): Promise<Manifest | null> {
 }
 
 function findDbFile(backupPath: string, manifestDbFile?: string): string | null {
-  // Try manifest hint first (it names the file, actual may have a timestamp suffix)
+  // Use manifest hint exclusively when available — it names the exact file
   if (manifestDbFile) {
     const direct = join(backupPath, manifestDbFile);
     if (existsSync(direct)) return direct;
+    // Manifest references a file that doesn't exist — don't fall back to an arbitrary scan
+    return null;
   }
-  // Scan directory for any .sql.gz or .sql
-  const files = readdirSync(backupPath);
+  // No manifest: scan but sort for determinism and prefer compressed variant
+  const files = readdirSync(backupPath).sort();
   const sqlGz = files.find((f) => f.endsWith(".sql.gz"));
   if (sqlGz) return join(backupPath, sqlGz);
   const sql = files.find((f) => f.endsWith(".sql"));
@@ -180,23 +182,29 @@ export function backupRoutes(opts: {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    tar.stderr.on("data", (data: Buffer) => {
-      console.error(`[backup download] tar stderr: ${data.toString().trim()}`);
-    });
-
     tar.on("error", (err) => {
       if (!res.headersSent) {
         res.status(500).json({ error: `Failed to create archive: ${err.message}` });
       } else {
-        res.destroy();
+        res.destroy(err);
       }
     });
 
-    tar.on("close", (code) => {
-      if (code !== 0 && !res.writableEnded) res.destroy();
+    tar.stderr.on("data", (data: Buffer) => {
+      console.error(`[backup download] tar stderr: ${data.toString().trim()}`);
     });
 
-    tar.stdout.pipe(res);
+    tar.on("close", (code) => {
+      if (code !== 0) {
+        if (!res.headersSent) {
+          res.status(500).json({ error: `tar exited with code ${code}` });
+        } else {
+          res.destroy(new Error(`tar exited with code ${code}`));
+        }
+      }
+    });
+
+    tar.stdout.pipe(res, { end: true });
   });
 
   // POST /api/backup/:name/restore — restaure DB + tous les fichiers depuis un backup complet
@@ -351,6 +359,10 @@ export function backupRoutes(opts: {
       res.status(400).json({ error: "Invalid payload: expected an array of 'names'" });
       return;
     }
+    if (names.length > 100) {
+      res.status(400).json({ error: "Too many names: maximum 100 per request" });
+      return;
+    }
 
     const backups = listFullBackups(opts.backupDir);
     const results = {
@@ -410,9 +422,8 @@ export function backupRoutes(opts: {
         const manifestPath = join(fullPath, "manifest.json");
         const hasManifest = existsSync(manifestPath);
         
-        // Reaper: Si c'est un dossier de backup mais sans manifeste (incomplet/crash)
-        // et qu'il ne s'agit pas de la racine des logs, on le fauche.
-        if (!hasManifest && file.startsWith("backup-")) {
+        // Reaper: dossiers de full backup (format: {prefix}-full-{timestamp}) sans manifeste = incomplet/crash
+        if (!hasManifest && /-full-\d{8}T\d{6}/.test(file)) {
           try {
             await rm(fullPath, { recursive: true, force: true });
             reaped.push(file);

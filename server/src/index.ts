@@ -16,6 +16,7 @@ import {
   reconcilePendingMigrationHistory,
   formatDatabaseBackupResult,
   runDatabaseBackup,
+  runFullBackup,
   authUsers,
   companies,
   companyMemberships,
@@ -661,31 +662,54 @@ export async function startServer(): Promise<StartedServer> {
 
       backupInFlight = true;
       try {
-        const result = await runDatabaseBackup({
+        const instanceRoot = resolvePaperclipInstanceRoot();
+        const result = await runFullBackup({
           connectionString: activeDatabaseConnectionString,
           backupDir: config.databaseBackupDir,
-          retentionDays: config.databaseBackupRetentionDays,
           filenamePrefix: "paperclip",
+          compression: config.databaseBackupCompression,
+          instanceRoot,
+          skillsDir: resolve(instanceRoot, "skills"),
+          projectsDir: resolve(instanceRoot, "projects"),
+          workspacesDir: resolve(instanceRoot, "workspaces"),
+          storageDir: resolve(instanceRoot, "data", "storage"),
+          secretsDir: resolve(instanceRoot, "secrets"),
+          configFile: resolve(instanceRoot, "config.json"),
+          includeFiles: {
+            skills: config.databaseBackupIncludeSkills,
+            projects: config.databaseBackupIncludeProjects,
+            workspaces: config.databaseBackupIncludeWorkspaces,
+            storage: config.databaseBackupIncludeStorage,
+            secrets: config.databaseBackupIncludeSecrets,
+            config: config.databaseBackupIncludeConfig,
+          },
+          gfs: {
+            enabled: config.databaseBackupGfsEnabled,
+            hourlyCount: config.databaseBackupGfsHourlyCount,
+            dailyCount: config.databaseBackupGfsDailyCount,
+            weeklyCount: config.databaseBackupGfsWeeklyCount,
+          },
         });
         lastBackupResult = {
           completedAt: new Date(),
-          backupDir: config.databaseBackupDir,
-          dbSizeBytes: result.sizeBytes,
-          filesSizeBytes: 0,
-          totalSizeBytes: result.sizeBytes,
+          backupDir: result.backupDir,
+          dbSizeBytes: result.dbSizeBytes,
+          filesSizeBytes: result.filesSizeBytes,
+          totalSizeBytes: result.totalSizeBytes,
           prunedCount: result.prunedCount,
-          includedDirs: ["db"],
+          includedDirs: result.includedDirs,
         };
         lastBackupError = null;
         logger.info(
           {
-            backupFile: result.backupFile,
-            sizeBytes: result.sizeBytes,
+            backupDir: result.backupDir,
+            dbSizeBytes: result.dbSizeBytes,
+            filesSizeBytes: result.filesSizeBytes,
+            totalSizeBytes: result.totalSizeBytes,
             prunedCount: result.prunedCount,
-            backupDir: config.databaseBackupDir,
-            retentionDays: config.databaseBackupRetentionDays,
+            includedDirs: result.includedDirs,
           },
-          `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
+          `Automatic full backup complete`,
         );
       } catch (err) {
         lastBackupError = {

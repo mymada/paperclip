@@ -349,24 +349,159 @@ describe("POST /backup/:name/restore", () => {
     expect(res.body.error).toMatch(/Connection refused/);
   });
 
-  it("finds db file by directory scan when manifest dbFile path does not exist", async () => {
-    const { runDatabaseRestore } = await import("@paperclipai/db");
-
+  it("returns 422 when manifest references a db file that no longer exists on disk", async () => {
     const dir = makeBackupEntry(backupDir, "paperclip-full-20260327-100000", {
       compressed: false,
-      // manifest says db.sql but actual file is named differently
       manifestDbFile: "db.sql",
       includeManifest: true,
     });
-    // Remove db.sql and add a timestamped version (like the real backup creates)
+    // Remove the file that the manifest points to — no fallback scan should occur
     rmSync(join(dir, "db.sql"), { force: true });
-    writeFileSync(
-      join(dir, "db-20260327-175332.sql"),
-      "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900\nSELECT 1;",
-    );
+
+    const res = await request(makeApp()).post("/backup/paperclip-full-20260327-100000/restore");
+    expect(res.status).toBe(422);
+    expect(res.body.error).toMatch(/no database file/i);
+  });
+
+  it("finds db file by sorted directory scan when no manifest exists", async () => {
+    const { runDatabaseRestore } = await import("@paperclipai/db");
+
+    const dir = join(backupDir, "paperclip-full-20260327-100000");
+    mkdirSync(dir, { recursive: true });
+    // No manifest — two .sql files present, sorted order should pick db-a first
+    const sqlContent = "-- paperclip statement breakpoint 69f6f3f1-42fd-46a6-bf17-d1d85f8f3900\nSELECT 1;";
+    writeFileSync(join(dir, "db-z.sql"), sqlContent);
+    writeFileSync(join(dir, "db-a.sql"), sqlContent);
 
     const res = await request(makeApp()).post("/backup/paperclip-full-20260327-100000/restore");
     expect(res.status).toBe(200);
     expect(runDatabaseRestore).toHaveBeenCalledOnce();
+    const call = vi.mocked(runDatabaseRestore).mock.calls[0][0];
+    // Sorted scan → db-a.sql picked first
+    expect(call.backupFile).toMatch(/db-a\.sql$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /backup/:name
+// ---------------------------------------------------------------------------
+
+describe("DELETE /backup/:name", () => {
+  it("returns 400 for invalid backup name", async () => {
+    const res = await request(makeApp()).delete("/backup/foo;rm%20-rf");
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 when backup does not exist", async () => {
+    const res = await request(makeApp()).delete("/backup/paperclip-full-20260101-000000");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/not found/i);
+  });
+
+  it("deletes an existing backup directory", async () => {
+    makeBackupEntry(backupDir, "paperclip-full-20260327-100000");
+
+    const res = await request(makeApp()).delete("/backup/paperclip-full-20260327-100000");
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/deleted/i);
+
+    // Verify directory is gone
+    const list = await request(makeApp()).get("/backup");
+    expect(list.body.totalBackups).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /backup (bulk)
+// ---------------------------------------------------------------------------
+
+describe("DELETE /backup (bulk)", () => {
+  it("returns 400 for empty names array", async () => {
+    const res = await request(makeApp()).delete("/backup").send({ names: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid payload/i);
+  });
+
+  it("returns 400 for missing names field", async () => {
+    const res = await request(makeApp()).delete("/backup").send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when names array exceeds 100 entries", async () => {
+    const names = Array.from({ length: 101 }, (_, i) => `paperclip-full-20260101-${String(i).padStart(6, "0")}`);
+    const res = await request(makeApp()).delete("/backup").send({ names });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/too many/i);
+  });
+
+  it("deletes multiple backups in one request", async () => {
+    makeBackupEntry(backupDir, "paperclip-full-20260327-100000");
+    makeBackupEntry(backupDir, "paperclip-full-20260326-080000");
+
+    const res = await request(makeApp())
+      .delete("/backup")
+      .send({ names: ["paperclip-full-20260327-100000", "paperclip-full-20260326-080000"] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results.deleted).toHaveLength(2);
+    expect(res.body.results.failed).toHaveLength(0);
+
+    const list = await request(makeApp()).get("/backup");
+    expect(list.body.totalBackups).toBe(0);
+  });
+
+  it("reports failed entries individually without aborting the rest", async () => {
+    makeBackupEntry(backupDir, "paperclip-full-20260327-100000");
+
+    const res = await request(makeApp())
+      .delete("/backup")
+      .send({ names: ["paperclip-full-20260327-100000", "paperclip-full-nonexistent-000000"] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results.deleted).toContain("paperclip-full-20260327-100000");
+    expect(res.body.results.failed[0].name).toBe("paperclip-full-nonexistent-000000");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /backup/reap
+// ---------------------------------------------------------------------------
+
+describe("POST /backup/reap", () => {
+  it("returns empty reaped list when backup dir does not exist", async () => {
+    rmSync(backupDir, { recursive: true, force: true });
+    const res = await request(makeApp()).post("/backup/reap");
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/no backup directory/i);
+  });
+
+  it("does not reap valid backups with a manifest", async () => {
+    makeBackupEntry(backupDir, "paperclip-full-20260327-100000");
+    const res = await request(makeApp()).post("/backup/reap");
+    expect(res.status).toBe(200);
+    expect(res.body.reaped).toHaveLength(0);
+  });
+
+  it("reaps orphaned full backup directories without manifest", async () => {
+    // Orphaned dir matching the full-backup pattern but no manifest.json
+    const orphanName = "paperclip-full-20260325T120000";
+    mkdirSync(join(backupDir, orphanName), { recursive: true });
+    // Legit backup with manifest should survive
+    makeBackupEntry(backupDir, "paperclip-full-20260327-100000");
+
+    const res = await request(makeApp()).post("/backup/reap");
+    expect(res.status).toBe(200);
+    expect(res.body.reaped).toContain(orphanName);
+    expect(res.body.reaped).not.toContain("paperclip-full-20260327-100000");
+  });
+
+  it("does not reap non-backup directories even without a manifest", async () => {
+    // A dir that doesn't match /-full-\d{8}T\d{6}/ should never be touched
+    mkdirSync(join(backupDir, "logs"), { recursive: true });
+    mkdirSync(join(backupDir, "tmp-upload"), { recursive: true });
+
+    const res = await request(makeApp()).post("/backup/reap");
+    expect(res.status).toBe(200);
+    expect(res.body.reaped).toHaveLength(0);
   });
 });

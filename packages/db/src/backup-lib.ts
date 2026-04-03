@@ -755,9 +755,10 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       const cursor = sql.unsafe(`SELECT * FROM ${qualifiedTableName}`).cursor(500);
       for await (const rows of cursor) {
         for (const row of rows) {
-          const values = row.map((rawValue: unknown, index: number) => {
-            const columnName = cols[index]?.column_name;
-            const val = columnName && nullifiedColumns.has(columnName) ? null : rawValue;
+          const rowObj = row as Record<string, unknown>;
+          const values = cols.map((col) => {
+            const rawValue = rowObj[col.column_name];
+            const val = nullifiedColumns.has(col.column_name) ? null : rawValue;
             if (val === null || val === undefined) return "NULL";
             if (typeof val === "boolean") return val ? "true" : "false";
             if (typeof val === "number") return String(val);

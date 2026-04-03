@@ -286,4 +286,38 @@ describe("createZipArchive", () => {
       },
     });
   });
+
+  it("throws a descriptive error for unsupported compression methods", async () => {
+    // Build a zip with compression method 99 (unsupported)
+    const encoder = new TextEncoder();
+    const fileName = encoder.encode("file.txt");
+    const body = encoder.encode("content");
+    const archive = new Uint8Array(30 + fileName.length + body.length + 46 + fileName.length + 22);
+    // Local file header
+    writeUint32(archive, 0, 0x04034b50);
+    writeUint16(archive, 6, 0x0000); // no data descriptor
+    writeUint16(archive, 8, 99);     // unsupported compression method
+    writeUint32(archive, 18, body.length);
+    writeUint32(archive, 22, body.length);
+    writeUint16(archive, 26, fileName.length);
+    archive.set(fileName, 30);
+    archive.set(body, 30 + fileName.length);
+
+    await expect(readZipArchive(archive)).rejects.toThrow(/only STORE and DEFLATE/i);
+  });
+
+  it("throws a descriptive error with browser version info when DecompressionStream is unavailable", async () => {
+    // Temporarily remove DecompressionStream to simulate an old browser
+    const original = (globalThis as Record<string, unknown>).DecompressionStream;
+    delete (globalThis as Record<string, unknown>).DecompressionStream;
+
+    try {
+      const archive = createDeflatedZipArchive({ "file.txt": "content" }, "root");
+      await expect(readZipArchive(archive)).rejects.toThrow(/modern browser/i);
+    } finally {
+      if (original !== undefined) {
+        (globalThis as Record<string, unknown>).DecompressionStream = original;
+      }
+    }
+  });
 });

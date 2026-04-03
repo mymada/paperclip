@@ -19,12 +19,17 @@ export {
 } from "./test-embedded-postgres.js";
 export {
   runDatabaseBackup,
+  runFullBackup,
   runDatabaseRestore,
   formatDatabaseBackupResult,
   listFullBackups,
   type RunDatabaseBackupOptions,
   type RunDatabaseBackupResult,
+  type RunFullBackupOptions,
+  type RunFullBackupResult,
   type RunDatabaseRestoreOptions,
+  type GfsOptions,
+  type BackupIncludeFiles,
 } from "./backup-lib.js";
 export {
   createEmbeddedPostgresLogBuffer,

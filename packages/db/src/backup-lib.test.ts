@@ -3,7 +3,7 @@ import os, { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { createBufferedTextFileWriter, listFullBackups, runDatabaseBackup, runDatabaseRestore } from "./backup-lib.js";
+import { createBufferedTextFileWriter, listFullBackups, runDatabaseBackup, runDatabaseRestore, runFullBackup } from "./backup-lib.js";
 import { ensurePostgresDatabase } from "./client.js";
 import {
   getEmbeddedPostgresTestSupport,
@@ -59,6 +59,120 @@ describe("backup-lib", () => {
       const smallEntry = result.find((r) => r.name === "paperclip-full-20260326-100000")!;
       expect(bigEntry.sizeBytes).toBeGreaterThan(smallEntry.sizeBytes);
     });
+  });
+
+  describe("runFullBackup", () => {
+    it(
+      "creates a full backup directory with manifest, db file, and copied instance files",
+      async () => {
+        const support = await getEmbeddedPostgresTestSupport();
+        if (!support.supported) {
+          console.warn("Embedded Postgres not supported, skipping test: " + support.reason);
+          return;
+        }
+
+        const sourceDb = await startEmbeddedPostgresTestDatabase("paperclip-full-backup-test-");
+        const backupDir = mkTmpDir();
+        const instanceRoot = mkTmpDir();
+
+        // Create instance dirs with some content
+        const skillsDir = join(instanceRoot, "skills");
+        const projectsDir = join(instanceRoot, "projects");
+        mkdirSync(skillsDir, { recursive: true });
+        mkdirSync(projectsDir, { recursive: true });
+        writeFileSync(join(skillsDir, "SKILL.md"), "# Test skill");
+        writeFileSync(join(projectsDir, "project.json"), "{}");
+
+        const sourceSql = postgres(sourceDb.connectionString);
+
+        try {
+          await sourceSql`CREATE TABLE items (id SERIAL PRIMARY KEY, label TEXT)`;
+          await sourceSql`INSERT INTO items (label) VALUES ('hello')`;
+
+          const result = await runFullBackup({
+            connectionString: sourceDb.connectionString,
+            backupDir,
+            filenamePrefix: "paperclip",
+            compression: false,
+            instanceRoot,
+            skillsDir,
+            projectsDir,
+            gfs: { enabled: false, hourlyCount: 0, dailyCount: 0, weeklyCount: 0 },
+          });
+
+          // Result shape
+          expect(result.dbSizeBytes).toBeGreaterThan(0);
+          expect(result.includedDirs).toContain("db");
+          expect(result.includedDirs).toContain("skills");
+          expect(result.includedDirs).toContain("projects");
+
+          // Backup directory exists
+          expect(fs.existsSync(result.backupDir)).toBe(true);
+
+          // Manifest written
+          const manifest = JSON.parse(fs.readFileSync(join(result.backupDir, "manifest.json"), "utf8"));
+          expect(manifest.version).toBe(1);
+          expect(manifest.compression).toBe(false);
+          expect(manifest.included).toContain("db");
+
+          // DB file exists
+          expect(fs.existsSync(result.dbFile)).toBe(true);
+
+          // Skills and projects copied
+          expect(fs.existsSync(join(result.backupDir, "skills", "SKILL.md"))).toBe(true);
+          expect(fs.existsSync(join(result.backupDir, "projects", "project.json"))).toBe(true);
+
+          // Appears in listFullBackups
+          const list = listFullBackups(backupDir);
+          expect(list).toHaveLength(1);
+          expect(list[0].name).toMatch(/^paperclip-full-/);
+        } finally {
+          await sourceSql.end();
+          await sourceDb.cleanup();
+          rmSync(backupDir, { recursive: true, force: true });
+          rmSync(instanceRoot, { recursive: true, force: true });
+        }
+      },
+      60_000,
+    );
+
+    it(
+      "skips included dirs that do not exist on disk without failing",
+      async () => {
+        const support = await getEmbeddedPostgresTestSupport();
+        if (!support.supported) {
+          console.warn("Embedded Postgres not supported, skipping test: " + support.reason);
+          return;
+        }
+
+        const sourceDb = await startEmbeddedPostgresTestDatabase("paperclip-full-backup-skip-test-");
+        const backupDir = mkTmpDir();
+        const instanceRoot = mkTmpDir();
+        const sourceSql = postgres(sourceDb.connectionString);
+
+        try {
+          const result = await runFullBackup({
+            connectionString: sourceDb.connectionString,
+            backupDir,
+            filenamePrefix: "paperclip",
+            compression: false,
+            instanceRoot,
+            skillsDir: join(instanceRoot, "nonexistent-skills"),
+            gfs: { enabled: false, hourlyCount: 0, dailyCount: 0, weeklyCount: 0 },
+          });
+
+          expect(result.includedDirs).toContain("db");
+          expect(result.includedDirs).not.toContain("skills");
+          expect(result.filesSizeBytes).toBe(0);
+        } finally {
+          await sourceSql.end();
+          await sourceDb.cleanup();
+          rmSync(backupDir, { recursive: true, force: true });
+          rmSync(instanceRoot, { recursive: true, force: true });
+        }
+      },
+      60_000,
+    );
   });
 
   describe("database backup/restore", () => {
