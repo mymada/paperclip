@@ -19,4 +19,5 @@ export { backupRoutes } from "./backup.js";
 export { channelRoutes } from "./channels.js";
 export { planRoutes } from "./plans.js";
 export { delegationRoutes } from "./delegations.js";
+export { companyLessonRoutes } from "./company-lessons.js";
 export { notificationRuleRoutes } from "./notification-rules.js";

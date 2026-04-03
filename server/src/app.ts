@@ -29,6 +29,7 @@ import { backupRoutes } from "./routes/backup.js";
 import { channelRoutes } from "./routes/channels.js";
 import { planRoutes } from "./routes/plans.js";
 import { delegationRoutes } from "./routes/delegations.js";
+import { companyLessonRoutes } from "./routes/company-lessons.js";
 import { notificationRuleRoutes } from "./routes/notification-rules.js";
 import type { BackupSchedulerState, BackupLastResult, BackupLastError, BackupConfigSnapshot } from "./index.js";
 import { llmRoutes } from "./routes/llms.js";
@@ -178,6 +179,7 @@ export async function createApp(
   api.use(channelRoutes(db));
   api.use(planRoutes(db));
   api.use(delegationRoutes(db));
+  api.use(companyLessonRoutes(db));
   api.use(notificationRuleRoutes(db));
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();

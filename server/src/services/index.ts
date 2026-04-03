@@ -37,4 +37,5 @@ export { createStorageServiceFromConfig, getStorageService } from "../storage/in
 export { planModeService } from "./plan-mode.js";
 export { delegationService } from "./delegation.js";
 export { learningLoopService } from "./learning-loop.js";
+export { companyLessonService } from "./company-lessons.js";
 export { notificationDispatcherService } from "./notification-dispatcher.js";
