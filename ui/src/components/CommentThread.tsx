@@ -27,6 +27,8 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 interface CommentWithRunMeta extends IssueComment {
   runId?: string | null;
   runAgentId?: string | null;
+  clientId?: string;
+  clientStatus?: "pending" | "queued";
   queueState?: "queued" | null;
   queueTargetRunId?: string | null;
 }
@@ -219,8 +221,6 @@ function CopyMarkdownButton({ text }: { text: string }) {
   );
 }
 
-<<<<<<< HEAD
-=======
 function CommentCard({
   comment,
   agentMap,
@@ -435,9 +435,6 @@ function CommentCard({
     </div>
   );
 }
-
-
->>>>>>> master
 type TimelineItem =
   | { kind: "comment"; id: string; createdAtMs: number; comment: CommentWithRunMeta }
   | { kind: "event"; id: string; createdAtMs: number; event: IssueTimelineEvent }
@@ -605,7 +602,7 @@ const TimelineList = memo(function TimelineList({
         const isInterrupting = isQueued && comment.queueTargetRunId === interruptingQueuedRunId;
 
         return (
-          <div
+          <CommentCard
             key={comment.id}
             comment={comment}
             agentMap={agentMap}

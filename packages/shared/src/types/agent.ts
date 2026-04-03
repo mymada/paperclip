@@ -69,6 +69,7 @@ export interface Agent {
   icon: string | null;
   status: AgentStatus;
   reportsTo: string | null;
+  rolePrompt: string | null;
   scopes: string[];
   capabilities: string | null;
   adapterType: AgentAdapterType;

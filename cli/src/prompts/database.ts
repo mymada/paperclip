@@ -19,6 +19,21 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
       intervalMinutes: 60,
       retentionDays: 30,
       dir: defaultBackupDir,
+      compression: true,
+      includeFiles: {
+        skills: true,
+        projects: true,
+        workspaces: true,
+        storage: true,
+        secrets: true,
+        config: true,
+      },
+      gfs: {
+        enabled: true,
+        hourlyCount: 24,
+        dailyCount: 7,
+        weeklyCount: 4,
+      },
     },
   };
 
@@ -152,6 +167,9 @@ export async function promptDatabase(current?: DatabaseConfig): Promise<Database
       intervalMinutes: Number(backupIntervalInput || "60"),
       retentionDays: Number(backupRetentionInput || "30"),
       dir: backupDirInput || defaultBackupDir,
+      compression: base.backup.compression,
+      includeFiles: base.backup.includeFiles,
+      gfs: base.backup.gfs,
     },
   };
 }

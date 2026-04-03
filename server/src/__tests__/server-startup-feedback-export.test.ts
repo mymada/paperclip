@@ -123,6 +123,9 @@ vi.mock("../services/index.js", () => ({
   routineService: vi.fn(() => ({
     tickScheduledTriggers: vi.fn(async () => ({ triggered: 0 })),
   })),
+  mcpBridgeService: {
+    initialize: vi.fn(async () => undefined),
+  },
 }));
 
 vi.mock("../storage/index.js", () => ({

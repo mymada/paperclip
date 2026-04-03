@@ -205,6 +205,21 @@ export function buildWorktreeConfig(input: {
         intervalMinutes: source?.database.backup.intervalMinutes ?? 60,
         retentionDays: source?.database.backup.retentionDays ?? 30,
         dir: paths.backupDir,
+        compression: source?.database.backup.compression ?? true,
+        includeFiles: source?.database.backup.includeFiles ?? {
+          skills: true,
+          projects: true,
+          workspaces: true,
+          storage: true,
+          secrets: true,
+          config: true,
+        },
+        gfs: source?.database.backup.gfs ?? {
+          enabled: true,
+          hourlyCount: 24,
+          dailyCount: 7,
+          weeklyCount: 4,
+        },
       },
     },
     logging: {
