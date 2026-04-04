@@ -124,6 +124,7 @@ async function getAvailablePort(): Promise<number> {
 
 async function startTempDatabase() {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-routines-e2e-"));
+  fs.chmodSync(dataDir, 0o777);
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
   const instance = new EmbeddedPostgres({

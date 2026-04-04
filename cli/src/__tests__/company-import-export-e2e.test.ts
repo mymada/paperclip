@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -55,6 +55,7 @@ async function getAvailablePort(): Promise<number> {
 
 async function startTempDatabase() {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-db-"));
+  chmodSync(dataDir, 0o777);
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
   const instance = new EmbeddedPostgres({

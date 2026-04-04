@@ -52,8 +52,8 @@ export function dashboardService(db: Db) {
     summary: async (companyId: string) => {
       const now = new Date();
       const monthStart = currentUtcMonthStart(now);
-      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
       const [
         companyRow,
@@ -76,8 +76,8 @@ export function dashboardService(db: Db) {
           blocked: sql<number>`coalesce(sum(case when ${issues.status} = 'blocked' then 1 else 0 end), 0)::int`,
           done: sql<number>`coalesce(sum(case when ${issues.status} = 'done' then 1 else 0 end), 0)::int`,
           criticalCount: sql<number>`coalesce(sum(case when ${issues.priority} = 'critical' and ${issues.status} not in ('done', 'cancelled') then 1 else 0 end), 0)::int`,
-          stalledCount: sql<number>`coalesce(sum(case when ${issues.status} = 'in_progress' and ${issues.updatedAt} < ${staleThreshold} then 1 else 0 end), 0)::int`,
-          doneThisWeekCount: sql<number>`coalesce(sum(case when ${issues.status} = 'done' and ${issues.completedAt} >= ${weekStart} then 1 else 0 end), 0)::int`,
+          stalledCount: sql<number>`coalesce(sum(case when ${issues.status} = 'in_progress' and ${issues.updatedAt} < ${staleThreshold}::timestamptz then 1 else 0 end), 0)::int`,
+          doneThisWeekCount: sql<number>`coalesce(sum(case when ${issues.status} = 'done' and ${issues.completedAt} >= ${weekStart}::timestamptz then 1 else 0 end), 0)::int`,
         })
           .from(issues)
           .where(eq(issues.companyId, companyId)),
