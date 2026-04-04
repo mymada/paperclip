@@ -355,11 +355,13 @@ export async function resolveErpConfig(
   const erpnextUrl = raw.erpnextUrl ?? "";
   if (!erpnextUrl) throw new Error("ERPNext plugin not configured: missing erpnextUrl.");
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   const apiKey = raw.apiKey
-    ? await ctx.secrets.resolve(raw.apiKey).catch(() => raw.apiKey!)
+    ? (UUID_RE.test(raw.apiKey) ? await ctx.secrets.resolve(raw.apiKey).catch(() => raw.apiKey!) : raw.apiKey)
     : "";
   const apiSecret = raw.apiSecret
-    ? await ctx.secrets.resolve(raw.apiSecret).catch(() => raw.apiSecret!)
+    ? (UUID_RE.test(raw.apiSecret) ? await ctx.secrets.resolve(raw.apiSecret).catch(() => raw.apiSecret!) : raw.apiSecret)
     : "";
 
   if (!apiKey || !apiSecret) {
