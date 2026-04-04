@@ -648,12 +648,20 @@ export function agentInstructionsService() {
     }
     if (!state.rootPath) throw notFound("Agent instructions bundle is not configured");
     const normalizedPath = normalizeRelativeFilePath(relativePath);
-    if (normalizedPath === state.entryFile) {
-      throw unprocessable("Cannot delete the bundle entry file");
-    }
     const absolutePath = resolvePathWithinRoot(state.rootPath, normalizedPath);
+    let nextState = state;
+    if (normalizedPath === state.entryFile) {
+      // Deleting the entry file — promote another file as the new entry file
+      const allFiles = await listFilesRecursive(state.rootPath);
+      const remaining = allFiles.filter((f) => f !== normalizedPath);
+      if (remaining.length === 0) {
+        throw unprocessable("Cannot delete the only file in the bundle");
+      }
+      const newEntryFile = remaining[0]!;
+      nextState = { ...state, entryFile: newEntryFile };
+    }
     await fs.rm(absolutePath, { force: true });
-    const adapterConfig = buildPersistedBundleConfig(derived, state);
+    const adapterConfig = buildPersistedBundleConfig(derived, nextState);
     const bundle = await getBundle({ ...agent, adapterConfig });
     return { bundle, adapterConfig };
   }

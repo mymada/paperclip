@@ -1839,6 +1839,22 @@ export function agentRoutes(db: Db) {
 
     const actor = getActorInfo(req);
     const result = await instructions.deleteFile(existing, relativePath);
+    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+      existing.companyId,
+      result.adapterConfig,
+      { strictMode: strictSecretsMode },
+    );
+    await svc.update(
+      id,
+      { adapterConfig: normalizedAdapterConfig },
+      {
+        recordRevision: {
+          createdByAgentId: actor.agentId,
+          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+          source: "instructions_file_deleted",
+        },
+      },
+    );
     await logActivity(db, {
       companyId: existing.companyId,
       actorType: actor.actorType,
