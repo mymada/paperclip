@@ -245,7 +245,7 @@ export function Layout() {
     };
   }, [isMobile, updateMobileNavVisibility]);
 
-  const showCompanyRail = companies.length > 1;
+  const showCompanyRail = companies.length >= 1;
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
