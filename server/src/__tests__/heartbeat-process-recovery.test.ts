@@ -319,7 +319,11 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(issues.id, issueId))
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBeNull();
-    expect(issue?.checkoutRunId).toBe(runId);
+    // checkoutRunId must be cleared when the max-retry path is taken (no more retries):
+    // the issue is reset to "todo" so the next heartbeat can checkout fresh instead of
+    // accumulating "run ownership conflict" 403s from a stale checkout lock.
+    expect(issue?.checkoutRunId).toBeNull();
+    expect(issue?.status).toBe("todo");
   });
 
   it("clears the detached warning when the run reports activity again", async () => {

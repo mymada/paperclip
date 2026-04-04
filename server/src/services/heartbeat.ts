@@ -3204,19 +3204,25 @@ export function heartbeatService(db: Db) {
 
       if (!issue) return;
 
-      // If the run succeeded but the agent never explicitly closed the issue,
+      // If the run completed without the agent explicitly closing the issue,
       // reset it from in_progress back to todo so it can be picked up again.
-      // Only applies on succeeded runs: failed runs preserve checkoutRunId so
-      // the agent can reconnect to the same issue on the next wakeup (process
-      // loss recovery). On success there is no reconnect — the agent is done,
-      // so an unclosed in_progress issue is a leaked checkout.
+      // This applies to succeeded AND failed/cancelled runs because
+      // releaseIssueExecutionAndPromote is only called on non-retry paths:
+      //   - succeeded: agent is done, unclosed issue is a leaked checkout.
+      //   - failed/cancelled (no retry): no reconnect will be scheduled, so
+      //     preserving checkoutRunId would leave the issue permanently locked
+      //     with a stale run, causing "run ownership conflict" 403s on every
+      //     subsequent heartbeat until manually cleared.
+      // For failed runs WITH retry, enqueueProcessLossRetry is called instead
+      // and this function is not invoked, so checkout preservation for
+      // process-loss recovery is handled there, not here.
       const statusPatch: { executionRunId: null; executionAgentNameKey: null; executionLockedAt: null; updatedAt: Date; status?: string; checkoutRunId?: null; startedAt?: null } = {
         executionRunId: null,
         executionAgentNameKey: null,
         executionLockedAt: null,
         updatedAt: new Date(),
       };
-      if (issue.status === "in_progress" && run.status === "succeeded") {
+      if (issue.status === "in_progress") {
         statusPatch.status = "todo";
         statusPatch.checkoutRunId = null;
         statusPatch.startedAt = null;
