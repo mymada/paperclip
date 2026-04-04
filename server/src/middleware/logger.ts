@@ -64,7 +64,7 @@ export const httpLogger = pinoHttp({
   },
   customProps(req, res) {
     const props: Record<string, unknown> = {};
-    if (req.requestId) props.requestId = req.requestId;
+    if ((req as any).requestId) props.requestId = (req as any).requestId;
     if (res.statusCode >= 400) {
       const ctx = (res as any).__errorContext;
       if (ctx) {

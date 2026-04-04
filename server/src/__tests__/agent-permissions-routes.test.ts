@@ -70,6 +70,7 @@ const mockIssueApprovalService = vi.hoisted(() => ({
 
 const mockIssueService = vi.hoisted(() => ({
   list: vi.fn(),
+  findDependentsToWake: vi.fn().mockResolvedValue([]),
 }));
 
 const mockSecretService = vi.hoisted(() => ({

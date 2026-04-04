@@ -7,6 +7,7 @@ import { errorHandler } from "../middleware/index.js";
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   update: vi.fn(),
+  findDependentsToWake: vi.fn().mockResolvedValue([]),
 }));
 
 const mockAgentService = vi.hoisted(() => ({

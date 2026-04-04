@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
+import { errorHandler } from "../middleware/index.js";
 import { backupRoutes } from "../routes/backup.js";
 
 const gzipAsync = promisify(gzip);
@@ -135,6 +136,7 @@ function makeApp(overrides: {
       }),
     }),
   );
+  app.use(errorHandler);
   return app;
 }
 

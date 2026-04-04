@@ -15,6 +15,7 @@ const mockActivityService = vi.hoisted(() => ({
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
+  findDependentsToWake: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../services/activity.js", () => ({

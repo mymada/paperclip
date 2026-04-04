@@ -2167,7 +2167,7 @@ export function heartbeatService(db: Db) {
           if (!activePlan) { // getActivePlanForIssue already filters for status="approved"
             // Block execution — set run to failed with a clear reason
             await setRunStatus(run.id, "failed", {
-              errorMessage: "plan_required: An approved plan is required before execution for this issue. Create and get a plan approved via /companies/{companyId}/plans.",
+              error: "plan_required: An approved plan is required before execution for this issue. Create and get a plan approved via /companies/{companyId}/plans.",
             });
             await setWakeupStatus(run.wakeupRequestId, "failed", {
               finishedAt: new Date(),

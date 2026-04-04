@@ -211,7 +211,7 @@ export function channelGatewayService(db: Db) {
       }
 
       // Get or create session
-      const session = await db.transaction(async (tx: typeof db) => {
+      const session = await db.transaction(async (tx: any) => {
         const sessionKey = buildSessionKey(
           connection.companyId,
           messageEvent.platform,
@@ -284,7 +284,7 @@ export function channelGatewayService(db: Db) {
           payload: {
             sessionId: session.id,
             connectionId: connectionId,
-            messageEvent: messageEvent,
+            messageEvent: messageEvent as any,
           },
         })
         .returning();
@@ -307,7 +307,7 @@ export function channelGatewayService(db: Db) {
           hasImages: messageEvent.hasImages ?? false,
           hasAudio: messageEvent.hasAudio ?? false,
           hasDocuments: messageEvent.hasDocuments ?? false,
-          normalizedEvent: messageEvent,
+          normalizedEvent: messageEvent as any,
           agentWakeupRequestId: wakeupRequest.id,
           processedAt: new Date(),
         })

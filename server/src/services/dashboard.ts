@@ -4,8 +4,8 @@ import { agents, approvals, companies, costEvents, issues } from "@paperclipai/d
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
 
-function currentUtcMonthStartIso(now = new Date()) {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
+function currentUtcMonthStart(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
 }
 
 export function dashboardService(db: Db) {
@@ -13,7 +13,7 @@ export function dashboardService(db: Db) {
   return {
     alertSignals: async (companyId: string) => {
       const now = new Date();
-      const monthStart = currentUtcMonthStartIso(now);
+      const monthStart = currentUtcMonthStart(now);
 
       const [companyRow, [agentErrorRow], [monthSpendRow]] = await Promise.all([
         db
@@ -51,7 +51,7 @@ export function dashboardService(db: Db) {
 
     summary: async (companyId: string) => {
       const now = new Date();
-      const monthStart = currentUtcMonthStartIso(now);
+      const monthStart = currentUtcMonthStart(now);
       const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
       const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 

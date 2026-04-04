@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction } from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
@@ -17,7 +17,7 @@ const mockChannelGatewayService = vi.hoisted(() => ({
   listPendingPairings: vi.fn(),
 }));
 
-vi.mock("../services/index.js", () => ({
+vi.mock("../services/channel-gateway.js", () => ({
   channelGatewayService: () => mockChannelGatewayService,
 }));
 
@@ -25,7 +25,7 @@ function createApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.actor = { type: "none", source: "none" };
+    (req as any).actor = { type: "none", source: "none" };
     next();
   });
   app.use("/api", channelRoutes({} as any));

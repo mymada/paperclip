@@ -10,6 +10,7 @@ const companyId = "22222222-2222-4222-8222-222222222222";
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
+  findDependentsToWake: vi.fn().mockResolvedValue([]),
 }));
 
 const mockDocumentsService = vi.hoisted(() => ({
