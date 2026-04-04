@@ -52,8 +52,8 @@ export function dashboardService(db: Db) {
     summary: async (companyId: string) => {
       const now = new Date();
       const monthStart = currentUtcMonthStart(now);
-      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
-      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
       const [
         companyRow,
