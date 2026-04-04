@@ -20,4 +20,13 @@ describe("company routes", () => {
       "/execution-workspaces/workspace-123",
     );
   });
+
+  it("treats newer board roots as non-company first segments", () => {
+    expect(extractCompanyPrefixFromPath("/channels")).toBeNull();
+    expect(extractCompanyPrefixFromPath("/notification-rules")).toBeNull();
+    expect(extractCompanyPrefixFromPath("/tests/ux/runs")).toBeNull();
+    expect(extractCompanyPrefixFromPath("/plugins/some-plugin")).toBeNull();
+    expect(extractCompanyPrefixFromPath("/settings/anything")).toBeNull();
+    expect(applyCompanyPrefix("/channels", "PAP")).toBe("/PAP/channels");
+  });
 });
