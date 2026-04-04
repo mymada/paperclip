@@ -148,9 +148,9 @@ export function channelRoutes(db: Db) {
     "/companies/:companyId/channel-connections/:connectionId/inbound",
     validate(inboundMessageSchema),
     async (req: Request, res: Response, next: NextFunction) => {
+      const companyId = req.params.companyId as string;
+      const connectionId = req.params.connectionId as string;
       try {
-        const companyId = req.params.companyId as string;
-        const connectionId = req.params.connectionId as string;
 
         const connection = await service.getConnection(connectionId);
         if (!connection) throw notFound("Connection not found");
