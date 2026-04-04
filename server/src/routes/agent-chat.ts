@@ -18,6 +18,7 @@ import { callLlm, type LlmMessage } from "../services/llm-client.js";
 import { notFound } from "../errors.js";
 import { parseObject } from "../adapters/utils.js";
 import { assertCompanyAccess } from "./authz.js";
+import { logger } from "../middleware/logger.js";
 
 /**
  * Parse structured action signals from CEO response.
@@ -36,7 +37,12 @@ function parseStructuredActions(response: string): {
       artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
     };
-  } catch {
+  } catch (parseErr) {
+    const inner = match[1].trim();
+    logger.debug(
+      { err: parseErr, actionsBlockLength: inner.length },
+      "CEO %%ACTIONS%% block present but JSON parse failed; ignoring structured actions",
+    );
     return null;
   }
 }
@@ -157,6 +163,19 @@ export function agentChatRoutes(db: Db) {
       // Execute directly — stream stdout chunks as SSE events
       let fullResponse = "";
       const startTime = Date.now();
+      const relayAdapterStart = Date.now();
+      logger.debug(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.relay",
+          companyId: agent.companyId,
+          agentId: agent.id,
+          issueId: taskId,
+          runId,
+          adapterType: agent.adapterType,
+        },
+        "Chat relay adapter execute start",
+      );
 
       const result = await adapter.execute({
         runId,
@@ -185,6 +204,22 @@ export function agentChatRoutes(db: Db) {
           // Silently consume metadata
         },
       });
+
+      logger.debug(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.relay",
+          companyId: agent.companyId,
+          agentId: agent.id,
+          issueId: taskId,
+          runId,
+          adapterType: agent.adapterType,
+          durationMs: Date.now() - relayAdapterStart,
+          exitCode: result.exitCode,
+          timedOut: Boolean(result.timedOut),
+        },
+        "Chat relay adapter execute finished",
+      );
 
       // Finalize the heartbeat run
       await db
@@ -224,6 +259,16 @@ export function agentChatRoutes(db: Db) {
         );
       }
     } catch (err) {
+      logger.warn(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.relay",
+          runId,
+          agentId,
+          err,
+        },
+        "Chat relay failed",
+      );
       // Mark the run as failed on error (best-effort)
       await db
         .update(heartbeatRuns)
@@ -495,6 +540,17 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
     res.flushHeaders();
     res.write(`data: ${JSON.stringify({ type: "start", agentId, agentName: agent.name })}\n\n`);
 
+    logger.debug(
+      {
+        requestId: req.requestId,
+        op: "agent-chat.ceo.stream",
+        companyId: agent.companyId,
+        agentId,
+        issueId: taskId,
+      },
+      "CEO chat stream (claude CLI) start",
+    );
+
     // Spawn claude CLI directly — no adapter overhead
     const args = [
       "-p", "-",
@@ -559,13 +615,38 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
       }
     });
 
-    // Log stderr for debugging
     proc.stderr.on("data", (data: Buffer) => {
-      console.error("[chat/stream stderr]", data.toString());
+      const text = data.toString();
+      logger.debug(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.ceo.stream",
+          companyId: agent.companyId,
+          agentId,
+          issueId: taskId,
+          stderrChars: text.length,
+          stderrTail: text.length > 800 ? text.slice(-800) : text,
+        },
+        "CEO chat stream claude stderr",
+      );
     });
 
     proc.on("close", async (exitCode) => {
       clearTimeout(timeout);
+
+      logger.debug(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.ceo.stream",
+          companyId: agent.companyId,
+          agentId,
+          issueId: taskId,
+          durationMs: Date.now() - startTime,
+          exitCode: exitCode ?? 0,
+          timedOut: killed,
+        },
+        "CEO chat stream claude closed",
+      );
 
       // Parse structured actions before stripping
       const structuredActions = parseStructuredActions(fullResponse);
@@ -618,16 +699,33 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
 
     proc.on("error", async (err) => {
       clearTimeout(timeout);
-      console.error("[agent-chat] Claude process error, falling back to direct LLM call:", err);
-      
+      logger.warn(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.ceo.stream",
+          companyId: agent.companyId,
+          agentId,
+          issueId: taskId,
+          err,
+        },
+        "CEO chat stream claude process error; falling back to direct LLM",
+      );
+
       try {
         const messages: LlmMessage[] = [
           { role: "system", content: systemPrompt },
-          { role: "user", content: prompt }
+          { role: "user", content: prompt },
         ];
-        
-        const llmResponse = await callLlm(messages);
-        
+
+        const llmResponse = await callLlm(messages, {
+          logMeta: {
+            op: "agent-chat.ceo.stream.fallback",
+            companyId: agent.companyId,
+            issueId: taskId,
+            requestId: req.requestId,
+          },
+        });
+
         if (res.writable) {
           res.write(`data: ${JSON.stringify({ type: "chunk", text: llmResponse })}\n\n`);
           res.write(
@@ -645,10 +743,20 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
         const cleanedResponse = stripActionSignals(llmResponse).trim();
         if (cleanedResponse && taskId) {
           await issueSvc.addComment(taskId, cleanedResponse, {
-            userId: "board-concierge",
+            agentId: agent.id,
           });
         }
       } catch (fallbackErr) {
+        logger.warn(
+          {
+            requestId: req.requestId,
+            op: "agent-chat.ceo.stream.fallback",
+            companyId: agent.companyId,
+            issueId: taskId,
+            err: fallbackErr,
+          },
+          "CEO chat stream LLM fallback failed",
+        );
         if (res.writable) {
           res.write(`data: ${JSON.stringify({ type: "error", message: `Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}` })}\n\n`);
           res.end();
@@ -760,6 +868,16 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
     res.flushHeaders();
     res.write(`data: ${JSON.stringify({ type: "start", issueId: resolvedIssueId })}\n\n`);
 
+    logger.debug(
+      {
+        requestId: req.requestId,
+        op: "agent-chat.board.stream",
+        companyId,
+        issueId: resolvedIssueId,
+      },
+      "Board chat stream (claude CLI) start",
+    );
+
     // Spawn claude CLI with board skill
     const args = [
       "-p",
@@ -856,11 +974,35 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
     });
 
     proc.stderr.on("data", (data: Buffer) => {
-      console.error("[board/chat/stream stderr]", data.toString());
+      const text = data.toString();
+      logger.debug(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.board.stream",
+          companyId,
+          issueId: resolvedIssueId,
+          stderrChars: text.length,
+          stderrTail: text.length > 800 ? text.slice(-800) : text,
+        },
+        "Board chat stream claude stderr",
+      );
     });
 
     proc.on("close", async (exitCode) => {
       clearTimeout(timeout);
+
+      logger.debug(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.board.stream",
+          companyId,
+          issueId: resolvedIssueId,
+          durationMs: Date.now() - startTime,
+          exitCode: exitCode ?? 0,
+          timedOut: killed,
+        },
+        "Board chat stream claude closed",
+      );
 
       // Save response as a comment (strip any action signals)
       const cleanedResponse = stripActionSignals(fullResponse).trim();
@@ -892,16 +1034,32 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
 
     proc.on("error", async (err) => {
       clearTimeout(timeout);
-      console.error("[agent-chat] Claude process error, falling back to direct LLM call:", err);
-      
+      logger.warn(
+        {
+          requestId: req.requestId,
+          op: "agent-chat.board.stream",
+          companyId,
+          issueId: resolvedIssueId,
+          err,
+        },
+        "Board chat stream claude process error; falling back to direct LLM",
+      );
+
       try {
         const messages: LlmMessage[] = [
           { role: "system", content: systemPrompt },
-          { role: "user", content: prompt }
+          { role: "user", content: prompt },
         ];
-        
-        const llmResponse = await callLlm(messages);
-        
+
+        const llmResponse = await callLlm(messages, {
+          logMeta: {
+            op: "agent-chat.board.stream.fallback",
+            companyId,
+            issueId: resolvedIssueId,
+            requestId: req.requestId,
+          },
+        });
+
         if (res.writable) {
           res.write(`data: ${JSON.stringify({ type: "chunk", text: llmResponse })}\n\n`);
           res.write(
@@ -917,13 +1075,23 @@ If nothing to create, output empty arrays. ALWAYS include this signal line.`;
 
         // Save as comment
         const cleanedResponse = stripActionSignals(llmResponse).trim();
-        const targetIssueId = taskId || (typeof resolvedIssueId !== 'undefined' ? resolvedIssueId : "");
+        const targetIssueId = taskId || (typeof resolvedIssueId !== "undefined" ? resolvedIssueId : "");
         if (cleanedResponse && targetIssueId) {
           await issueSvc.addComment(targetIssueId, cleanedResponse, {
             userId: "board-concierge",
           });
         }
       } catch (fallbackErr) {
+        logger.warn(
+          {
+            requestId: req.requestId,
+            op: "agent-chat.board.stream.fallback",
+            companyId,
+            issueId: resolvedIssueId,
+            err: fallbackErr,
+          },
+          "Board chat stream LLM fallback failed",
+        );
         if (res.writable) {
           res.write(`data: ${JSON.stringify({ type: "error", message: `Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}` })}\n\n`);
           res.end();

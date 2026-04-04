@@ -3,6 +3,8 @@ export {};
 declare global {
   namespace Express {
     interface Request {
+      /** Set by `requestIdMiddleware` for every HTTP request. */
+      requestId: string;
       actor: {
         type: "board" | "agent" | "none";
         userId?: string;

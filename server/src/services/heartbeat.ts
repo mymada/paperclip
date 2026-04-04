@@ -2586,6 +2586,7 @@ export function heartbeatService(db: Db) {
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
     let stderrExcerpt = "";
+    let adapterExecuteStartMs = 0;
     try {
       const startedAt = run.startedAt ?? new Date();
       const runningWithSession = await db
@@ -2745,6 +2746,18 @@ export function heartbeatService(db: Db) {
       };
 
       const adapter = getServerAdapter(agent.adapterType);
+      adapterExecuteStartMs = Date.now();
+      logger.debug(
+        {
+          op: "heartbeat.adapter.execute",
+          runId: run.id,
+          issueId: issueId ?? undefined,
+          agentId: agent.id,
+          companyId: agent.companyId,
+          adapterType: agent.adapterType,
+        },
+        "Adapter execute start",
+      );
       const authToken = adapter.supportsLocalAgentJwt
         ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
         : null;
@@ -2801,6 +2814,21 @@ export function heartbeatService(db: Db) {
         },
         authToken: authToken ?? undefined,
       });
+      logger.debug(
+        {
+          op: "heartbeat.adapter.execute",
+          runId: run.id,
+          issueId: issueId ?? undefined,
+          agentId: agent.id,
+          companyId: agent.companyId,
+          adapterType: agent.adapterType,
+          durationMs: Date.now() - adapterExecuteStartMs,
+          exitCode: adapterResult.exitCode,
+          timedOut: Boolean(adapterResult.timedOut),
+          hasErrorMessage: Boolean(adapterResult.errorMessage),
+        },
+        "Adapter execute finished",
+      );
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
             db,
@@ -3014,6 +3042,21 @@ export function heartbeatService(db: Db) {
         err instanceof Error ? err.message : "Unknown adapter failure",
         await getCurrentUserRedactionOptions(),
       );
+      if (adapterExecuteStartMs > 0) {
+        logger.debug(
+          {
+            op: "heartbeat.adapter.execute",
+            runId,
+            issueId: issueId ?? undefined,
+            agentId: agent.id,
+            companyId: agent.companyId,
+            adapterType: agent.adapterType,
+            durationMs: Date.now() - adapterExecuteStartMs,
+            err,
+          },
+          "Adapter execute failed before normal completion",
+        );
+      }
       logger.error({ err, runId }, "heartbeat execution failed");
 
       let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;

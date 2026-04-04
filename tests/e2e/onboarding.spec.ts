@@ -1,24 +1,19 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * E2E: Onboarding wizard flow (skip_llm mode).
+ * E2E: current onboarding flow.
  *
- * Walks through the 4-step OnboardingWizard:
- *   Step 1 — Name your company
- *   Step 2 — Create your first agent (adapter selection + config)
- *   Step 3 — Give it something to do (task creation)
- *   Step 4 — Ready to launch (summary + open issue)
+ * Walks through the current wizard:
+ *   Front door -> company name -> mission -> CEO setup -> launch to board chat.
  *
- * By default this runs in skip_llm mode: we do NOT assert that an LLM
- * heartbeat fires. Set PAPERCLIP_E2E_SKIP_LLM=false to enable LLM-dependent
- * assertions (requires a valid ANTHROPIC_API_KEY).
+ * The wizard now creates a planning issue for the CEO and redirects to
+ * board chat instead of creating and opening a user-authored issue directly.
  */
-
-const SKIP_LLM = process.env.PAPERCLIP_E2E_SKIP_LLM !== "false";
 
 const COMPANY_NAME = `E2E-Test-${Date.now()}`;
 const AGENT_NAME = "CEO";
-const TASK_TITLE = "E2E test task";
+const COMPANY_MISSION = "Build the best AI operations company for technical teams.";
+const WORKING_DIRECTORY = "/tmp/paperclip-e2e-onboarding";
 
 test.describe("Onboarding wizard", () => {
   test("completes full wizard flow", async ({ page }) => {
@@ -26,13 +21,18 @@ test.describe("Onboarding wizard", () => {
 
     const wizardHeading = page.locator("h3", { hasText: "Name your company" });
     const newCompanyBtn = page.getByRole("button", { name: "New Company" });
+    const createCompanyBtn = page.getByRole("button", { name: /Create a new company/i });
 
     await expect(
-      wizardHeading.or(newCompanyBtn)
+      wizardHeading.or(newCompanyBtn).or(createCompanyBtn)
     ).toBeVisible({ timeout: 15_000 });
 
     if (await newCompanyBtn.isVisible()) {
       await newCompanyBtn.click();
+    }
+
+    if (await createCompanyBtn.isVisible()) {
+      await createCompanyBtn.click();
     }
 
     await expect(wizardHeading).toBeVisible({ timeout: 5_000 });
@@ -44,51 +44,32 @@ test.describe("Onboarding wizard", () => {
     await nextButton.click();
 
     await expect(
-      page.locator("h3", { hasText: "Create your first agent" })
+      page.locator("h3", { hasText: "Define your mission" })
     ).toBeVisible({ timeout: 10_000 });
+
+    await page.locator('textarea[placeholder="What is this company trying to achieve?"]').fill(COMPANY_MISSION);
+    await page.getByRole("button", { name: "Confirm mission" }).click();
 
     const agentNameInput = page.locator('input[placeholder="CEO"]');
+    await expect(
+      page.locator("h3", { hasText: "Bring your CEO to life" })
+    ).toBeVisible({ timeout: 10_000 });
     await expect(agentNameInput).toHaveValue(AGENT_NAME);
 
-    await expect(
-      page.locator("button", { hasText: "Claude Code" }).locator("..")
-    ).toBeVisible();
-
-    await page.getByRole("button", { name: "More Agent Adapter Types" }).click();
-    await page.getByRole("button", { name: "Process" }).click();
-
-    const commandInput = page.locator('input[placeholder="e.g. node, python"]');
-    await commandInput.fill("echo");
-    const argsInput = page.locator(
-      'input[placeholder="e.g. script.js, --flag"]'
-    );
-    await argsInput.fill("hello");
-
-    await page.getByRole("button", { name: "Next" }).click();
+    await page.getByRole("button", { name: "Gemini CLI" }).click();
+    await page.locator('input[placeholder="/path/to/project"]').fill(WORKING_DIRECTORY);
+    await page.getByRole("button", { name: "Give it a heartbeat" }).click();
 
     await expect(
-      page.locator("h3", { hasText: "Give it something to do" })
-    ).toBeVisible({ timeout: 10_000 });
-
-    const taskTitleInput = page.locator(
-      'input[placeholder="e.g. Research competitor pricing"]'
-    );
-    await taskTitleInput.clear();
-    await taskTitleInput.fill(TASK_TITLE);
-
-    await page.getByRole("button", { name: "Next" }).click();
-
-    await expect(
-      page.locator("h3", { hasText: "Ready to launch" })
+      page.getByRole("button", { name: "Launch company" })
     ).toBeVisible({ timeout: 10_000 });
 
     await expect(page.locator("text=" + COMPANY_NAME)).toBeVisible();
     await expect(page.locator("text=" + AGENT_NAME)).toBeVisible();
-    await expect(page.locator("text=" + TASK_TITLE)).toBeVisible();
+    await expect(page.locator("text=" + COMPANY_MISSION)).toBeVisible();
 
-    await page.getByRole("button", { name: "Create & Open Issue" }).click();
-
-    await expect(page).toHaveURL(/\/issues\//, { timeout: 10_000 });
+    await page.getByRole("button", { name: "Launch company" }).click();
+    await expect(page).toHaveURL(/\/board-chat/, { timeout: 10_000 });
 
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
 
@@ -110,7 +91,7 @@ test.describe("Onboarding wizard", () => {
     );
     expect(ceoAgent).toBeTruthy();
     expect(ceoAgent.role).toBe("ceo");
-    expect(ceoAgent.adapterType).toBe("process");
+    expect(ceoAgent.adapterType).toBe("gemini_local");
 
     const issuesRes = await page.request.get(
       `${baseUrl}/api/companies/${company.id}/issues`
@@ -118,19 +99,10 @@ test.describe("Onboarding wizard", () => {
     expect(issuesRes.ok()).toBe(true);
     const issues = await issuesRes.json();
     const task = issues.find(
-      (i: { title: string }) => i.title === TASK_TITLE
+      (i: { title: string }) => i.title === "Strategy & hiring plan with CEO"
     );
     expect(task).toBeTruthy();
-    expect(task.assigneeAgentId).toBe(ceoAgent.id);
-
-    if (!SKIP_LLM) {
-      await expect(async () => {
-        const res = await page.request.get(
-          `${baseUrl}/api/issues/${task.id}`
-        );
-        const issue = await res.json();
-        expect(["in_progress", "done"]).toContain(issue.status);
-      }).toPass({ timeout: 120_000, intervals: [5_000] });
-    }
+    expect(task.assigneeAgentId).toBeNull();
+    expect(task.status).toBe("backlog");
   });
 });

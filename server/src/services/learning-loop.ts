@@ -65,7 +65,15 @@ Only output the JSON array, nothing else.`;
             { role: "system", content: "You are an expert AI agent auditor specializing in extracting reusable lessons." },
             { role: "user", content: prompt },
           ],
-          { maxTokens: 512 },
+          {
+            maxTokens: 512,
+            logMeta: {
+              op: "learning-loop.extractLessons",
+              companyId,
+              runId,
+              ...(resolvedIssueId ? { issueId: resolvedIssueId } : {}),
+            },
+          },
         );
 
         if (!llmResponse || !llmResponse.trim()) {
@@ -79,12 +87,18 @@ Only output the JSON array, nothing else.`;
         try {
           lessons = JSON.parse(content);
         } catch (parseErr) {
-          logger.warn({ runId, content }, "Failed to parse LLM response as JSON");
+          logger.warn(
+            { runId, responseLength: content.length, err: parseErr },
+            "Failed to parse LLM response as JSON",
+          );
           return;
         }
 
         if (!Array.isArray(lessons)) {
-          logger.warn({ runId, lessons }, "LLM response is not an array");
+          logger.warn(
+            { runId, parsedType: typeof lessons },
+            "LLM response is not an array",
+          );
           return;
         }
 

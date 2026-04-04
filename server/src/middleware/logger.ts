@@ -20,6 +20,10 @@ fs.mkdirSync(logDir, { recursive: true });
 
 const logFile = path.join(logDir, "server.log");
 
+const logLevel =
+  process.env.PAPERCLIP_LOG_LEVEL?.trim() ||
+  (process.env.NODE_ENV === "production" ? "info" : "debug");
+
 const sharedOpts = {
   translateTime: "HH:MM:ss",
   ignore: "pid,hostname",
@@ -27,7 +31,7 @@ const sharedOpts = {
 };
 
 export const logger = pino({
-  level: "debug",
+  level: logLevel,
 }, pino.transport({
   targets: [
     {
@@ -59,17 +63,21 @@ export const httpLogger = pinoHttp({
     return `${req.method} ${req.url} ${res.statusCode} — ${errMsg}`;
   },
   customProps(req, res) {
+    const props: Record<string, unknown> = {};
+    if (req.requestId) props.requestId = req.requestId;
     if (res.statusCode >= 400) {
       const ctx = (res as any).__errorContext;
       if (ctx) {
+        if (ctx.requestId) props.requestId = ctx.requestId;
+        if (ctx.actor) props.actor = ctx.actor;
         return {
+          ...props,
           errorContext: ctx.error,
           reqBody: ctx.reqBody,
           reqParams: ctx.reqParams,
           reqQuery: ctx.reqQuery,
         };
       }
-      const props: Record<string, unknown> = {};
       const { body, params, query } = req as any;
       if (body && typeof body === "object" && Object.keys(body).length > 0) {
         props.reqBody = body;
@@ -85,6 +93,6 @@ export const httpLogger = pinoHttp({
       }
       return props;
     }
-    return {};
+    return props;
   },
 });

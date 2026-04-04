@@ -95,13 +95,25 @@ const noopScheduler = {
   runNow: vi.fn(),
 };
 
+const instanceAdminActor = {
+  type: "board" as const,
+  userId: "local-board",
+  source: "local_implicit" as const,
+  isInstanceAdmin: true,
+};
+
 function makeApp(overrides: {
   scheduler?: typeof noopScheduler | null;
   lastResult?: ReturnType<Parameters<typeof backupRoutes>[0]["getLastResult"]>;
   lastError?: ReturnType<Parameters<typeof backupRoutes>[0]["getLastError"]>;
+  actor?: Express.Request["actor"];
 } = {}) {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    req.actor = overrides.actor ?? instanceAdminActor;
+    next();
+  });
   app.use(
     "/backup",
     backupRoutes({
@@ -135,6 +147,25 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(backupDir, { recursive: true, force: true });
   rmSync(instanceRoot, { recursive: true, force: true });
+});
+
+describe("backup route auth", () => {
+  it("rejects non-admin board users", async () => {
+    const res = await request(
+      makeApp({
+        actor: {
+          type: "board",
+          userId: "user-1",
+          source: "session",
+          isInstanceAdmin: false,
+          companyIds: ["company-1"],
+        },
+      }),
+    ).get("/backup");
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/instance admin access required/i);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,14 +1,33 @@
 import { asString } from "../adapters/utils.js";
+import { logger } from "../middleware/logger.js";
 
 export interface LlmMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
+/** Optional correlation fields for debug logs (no message bodies or secrets). */
+export interface LlmLogMeta {
+  op?: string;
+  companyId?: string;
+  issueId?: string;
+  runId?: string;
+  requestId?: string;
+}
+
 export interface LlmCompletionOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  logMeta?: LlmLogMeta;
+}
+
+function totalPromptChars(messages: LlmMessage[]): number {
+  let n = 0;
+  for (const m of messages) {
+    n += m.content.length;
+  }
+  return n;
 }
 
 export async function callLlm(messages: LlmMessage[], options: LlmCompletionOptions = {}) {
@@ -17,10 +36,47 @@ export async function callLlm(messages: LlmMessage[], options: LlmCompletionOpti
     throw new Error("LLM API key not configured (OPENAI_API_KEY or ANTHROPIC_API_KEY)");
   }
 
-  if (process.env.OPENAI_API_KEY) {
-    return callOpenAi(messages, options);
-  } else {
-    return callAnthropic(messages, options);
+  const logMeta = options.logMeta;
+  const promptChars = totalPromptChars(messages);
+  const messageCount = messages.length;
+  const started = Date.now();
+
+  const logBase = {
+    ...logMeta,
+    messageCount,
+    promptChars,
+  };
+
+  try {
+    let text: string;
+    let provider: "openai" | "anthropic";
+    let model: string;
+    if (process.env.OPENAI_API_KEY) {
+      provider = "openai";
+      model = options.model || "gpt-4o";
+      text = await callOpenAi(messages, options);
+    } else {
+      provider = "anthropic";
+      model = options.model || "claude-sonnet-4-6";
+      text = await callAnthropic(messages, options);
+    }
+    const durationMs = Date.now() - started;
+    const responseChars = text.length;
+    logger.debug(
+      { ...logBase, provider, model, durationMs, responseChars, ok: true },
+      "LLM completion",
+    );
+    return text;
+  } catch (err) {
+    const durationMs = Date.now() - started;
+    const provider = process.env.OPENAI_API_KEY ? "openai" : "anthropic";
+    const model =
+      options.model || (provider === "openai" ? "gpt-4o" : "claude-sonnet-4-6");
+    logger.warn(
+      { ...logBase, provider, model, durationMs, ok: false, err },
+      "LLM completion failed",
+    );
+    throw err;
   }
 }
 

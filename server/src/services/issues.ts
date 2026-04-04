@@ -36,6 +36,7 @@ import { publishLiveEvent } from "./live-events.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
+import { logger } from "../middleware/logger.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -1510,6 +1511,18 @@ export function issueService(db: Db) {
 
       if (updated) {
         const [enriched] = await withIssueLabels(db, [updated]);
+        logger.debug(
+          {
+            op: "issues.checkout",
+            companyId: issueCompany.companyId,
+            issueId: id,
+            identifier: enriched.identifier,
+            agentId,
+            checkoutRunId,
+            outcome: "checked_out",
+          },
+          "Issue checkout succeeded",
+        );
         return enriched;
       }
 
@@ -1552,7 +1565,22 @@ export function issueService(db: Db) {
           )
           .returning()
           .then((rows) => rows[0] ?? null);
-        if (adopted) return adopted;
+        if (adopted) {
+          const [enriched] = await withIssueLabels(db, [adopted]);
+          logger.debug(
+            {
+              op: "issues.checkout",
+              companyId: issueCompany.companyId,
+              issueId: id,
+              identifier: enriched.identifier,
+              agentId,
+              checkoutRunId,
+              outcome: "adopted_null_checkout_run",
+            },
+            "Issue checkout succeeded",
+          );
+          return enriched;
+        }
       }
 
       if (
@@ -1571,6 +1599,18 @@ export function issueService(db: Db) {
         if (adopted) {
           const row = await db.select().from(issues).where(eq(issues.id, id)).then((rows) => rows[0]!);
           const [enriched] = await withIssueLabels(db, [row]);
+          logger.debug(
+            {
+              op: "issues.checkout",
+              companyId: issueCompany.companyId,
+              issueId: id,
+              identifier: enriched.identifier,
+              agentId,
+              checkoutRunId,
+              outcome: "adopted_stale_checkout_run",
+            },
+            "Issue checkout succeeded",
+          );
           return enriched;
         }
       }
@@ -1583,8 +1623,35 @@ export function issueService(db: Db) {
       ) {
         const row = await db.select().from(issues).where(eq(issues.id, id)).then((rows) => rows[0]!);
         const [enriched] = await withIssueLabels(db, [row]);
+        logger.debug(
+          {
+            op: "issues.checkout",
+            companyId: issueCompany.companyId,
+            issueId: id,
+            identifier: enriched.identifier,
+            agentId,
+            checkoutRunId,
+            outcome: "idempotent_same_run",
+          },
+          "Issue checkout no-op (same run already holds lock)",
+        );
         return enriched;
       }
+
+      logger.warn(
+        {
+          op: "issues.checkout",
+          companyId: issueCompany.companyId,
+          issueId: id,
+          agentId,
+          checkoutRunId,
+          currentStatus: current.status,
+          currentAssigneeAgentId: current.assigneeAgentId,
+          currentCheckoutRunId: current.checkoutRunId,
+          currentExecutionRunId: current.executionRunId,
+        },
+        "Issue checkout conflict",
+      );
 
       throw conflict("Issue checkout conflict", {
         issueId: current.id,
@@ -1599,6 +1666,7 @@ export function issueService(db: Db) {
       const current = await db
         .select({
           id: issues.id,
+          companyId: issues.companyId,
           status: issues.status,
           assigneeAgentId: issues.assigneeAgentId,
           checkoutRunId: issues.checkoutRunId,
@@ -1638,6 +1706,20 @@ export function issueService(db: Db) {
           };
         }
       }
+
+      logger.warn(
+        {
+          op: "issues.assertCheckoutOwner",
+          companyId: current.companyId,
+          issueId: current.id,
+          status: current.status,
+          assigneeAgentId: current.assigneeAgentId,
+          checkoutRunId: current.checkoutRunId,
+          actorAgentId,
+          actorRunId,
+        },
+        "Issue run ownership conflict",
+      );
 
       throw conflict("Issue run ownership conflict", {
         issueId: current.id,

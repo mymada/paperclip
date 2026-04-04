@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Db } from "@paperclipai/db";
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import type { StorageService } from "./storage/types.js";
-import { httpLogger, errorHandler } from "./middleware/index.js";
+import { httpLogger, errorHandler, requestIdMiddleware } from "./middleware/index.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
@@ -103,6 +103,14 @@ export async function createApp(
 ) {
   const app = express();
 
+  if (opts.deploymentMode === "local_trusted") {
+    logger.warn(
+      { deploymentMode: "local_trusted" },
+      "Board API access is implicitly trusted in this mode; do not expose this instance to untrusted networks",
+    );
+  }
+
+  app.use(requestIdMiddleware);
   app.use(express.json({
     // Company import/export payloads can inline full portable packages.
     limit: "10mb",

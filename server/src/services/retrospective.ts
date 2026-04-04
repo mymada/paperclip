@@ -64,10 +64,19 @@ Example: "Always check if the directory exists before writing a file." or "Don't
 Rule:`;
 
       try {
-        const rule = await callLlm([
-          { role: "system", content: "You are an expert software engineer and company auditor." },
-          { role: "user", content: prompt }
-        ]);
+        const rule = await callLlm(
+          [
+            { role: "system", content: "You are an expert software engineer and company auditor." },
+            { role: "user", content: prompt },
+          ],
+          {
+            logMeta: {
+              op: "retrospective.analyzeFailures",
+              companyId: issue.companyId,
+              issueId,
+            },
+          },
+        );
 
         if (rule) {
           await lessonSvc.create({
@@ -76,7 +85,10 @@ Rule:`;
             rule: rule.trim(),
             status: "draft"
           });
-          logger.info({ issueId, rule }, "Retrospective agent: generated new rule draft");
+          logger.info(
+            { issueId, ruleChars: rule.trim().length },
+            "Retrospective agent: generated new rule draft",
+          );
         }
       } catch (err) {
         logger.error({ issueId, err }, "Retrospective agent: failed to generate rule");
