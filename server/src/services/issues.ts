@@ -758,6 +758,25 @@ export function issueService(db: Db) {
       if (unreadForUserId) {
         conditions.push(unreadForUserCondition(companyId, unreadForUserId));
       }
+      if (filters?.inboxArchivedByUserId) {
+        const archivedUserId = filters.inboxArchivedByUserId;
+        conditions.push(sql<boolean>`
+          NOT EXISTS (
+            SELECT 1 FROM ${issueInboxArchives} ia
+            WHERE ia.issue_id = ${issues.id}
+              AND ia.company_id = ${companyId}::uuid
+              AND ia.user_id = ${archivedUserId}
+              AND ${issues.updatedAt} <= ia.archived_at
+              AND NOT EXISTS (
+                SELECT 1 FROM ${issueComments} c
+                WHERE c.issue_id = ${issues.id}
+                  AND c.company_id = ${companyId}::uuid
+                  AND (c.author_user_id IS NULL OR c.author_user_id <> ${archivedUserId})
+                  AND c.created_at > ia.archived_at
+              )
+          )
+        `);
+      }
       if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
       if (filters?.executionWorkspaceId) {
         conditions.push(eq(issues.executionWorkspaceId, filters.executionWorkspaceId));
