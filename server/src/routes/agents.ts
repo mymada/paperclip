@@ -2,8 +2,8 @@ import { Router, type Request } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable, projectWorkspaces } from "@paperclipai/db";
+import { and, desc, eq, inArray, isNotNull, not, sql } from "drizzle-orm";
 import {
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
@@ -1329,6 +1329,14 @@ export function agentRoutes(db: Db) {
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
+    // Warn if the company has no project workspace with a configured cwd.
+    const hireHasConfiguredWorkspace = await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(and(eq(projectWorkspaces.companyId, companyId), isNotNull(projectWorkspaces.cwd)))
+      .limit(1)
+      .then((rows) => rows.length > 0);
+
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
     const actor = getActorInfo(req);
 
@@ -1433,7 +1441,18 @@ export function agentRoutes(db: Db) {
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({
+      agent,
+      approval,
+      ...(hireHasConfiguredWorkspace
+        ? {}
+        : {
+            _warning:
+              "No project workspace with a local path (cwd) is configured for this company. " +
+              "This agent will run in an empty fallback workspace and cannot access any project files. " +
+              "Configure a project workspace via POST /companies/{companyId}/projects/{projectId}/workspaces with a valid cwd.",
+          }),
+    });
   });
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
@@ -1478,6 +1497,16 @@ export function agentRoutes(db: Db) {
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
+    // Warn if the company has no project workspace with a configured cwd — the agent
+    // will fall back to an empty workspace directory on every heartbeat, which means
+    // it cannot read or write any project files.
+    const hasConfiguredWorkspace = await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(and(eq(projectWorkspaces.companyId, companyId), isNotNull(projectWorkspaces.cwd)))
+      .limit(1)
+      .then((rows) => rows.length > 0);
+
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId,
@@ -1518,7 +1547,17 @@ export function agentRoutes(db: Db) {
       );
     }
 
-    res.status(201).json(agent);
+    res.status(201).json({
+      ...agent,
+      ...(hasConfiguredWorkspace
+        ? {}
+        : {
+            _warning:
+              "No project workspace with a local path (cwd) is configured for this company. " +
+              "This agent will run in an empty fallback workspace and cannot access any project files. " +
+              "Configure a project workspace via POST /companies/{companyId}/projects/{projectId}/workspaces with a valid cwd.",
+          }),
+    });
   });
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {

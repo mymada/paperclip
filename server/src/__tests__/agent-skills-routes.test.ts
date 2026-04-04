@@ -90,15 +90,38 @@ vi.mock("../adapters/index.js", () => ({
 }));
 
 function createDb(requireBoardApprovalForNewAgents = false) {
+  const createQueryChain = () => ({
+    limit: vi.fn(function() {
+      return this;
+    }),
+    then: vi.fn(async function(cb) {
+      return cb([]);
+    }),
+  });
+
+  const companyQueryChain = () => ({
+    limit: vi.fn(function() {
+      return this;
+    }),
+    then: vi.fn(async function(cb) {
+      return cb([
+        {
+          id: "company-1",
+          requireBoardApprovalForNewAgents,
+        },
+      ]);
+    }),
+  });
+
   return {
     select: vi.fn(() => ({
       from: vi.fn(() => ({
-        where: vi.fn(async () => [
-          {
-            id: "company-1",
-            requireBoardApprovalForNewAgents,
-          },
-        ]),
+        where: vi.fn((conditions) => {
+          // Return different results based on context
+          // For companies table, return company data
+          // For projectWorkspaces, return empty array
+          return companyQueryChain();
+        }),
       })),
     })),
   };
