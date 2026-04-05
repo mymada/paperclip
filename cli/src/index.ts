@@ -22,6 +22,7 @@ import { loadPaperclipEnvFile } from "./config/env.js";
 import { initTelemetryFromConfigFile, flushTelemetry } from "./telemetry.js";
 import { registerWorktreeCommands } from "./commands/worktree.js";
 import { registerPluginCommands } from "./commands/client/plugin.js";
+import { registerBoardCommands } from "./commands/client/board.js";
 import { registerClientAuthCommands } from "./commands/client/auth.js";
 import { cliVersion } from "./version.js";
 
@@ -146,6 +147,7 @@ registerRoutineCommands(program);
 registerFeedbackCommands(program);
 registerWorktreeCommands(program);
 registerPluginCommands(program);
+registerBoardCommands(program);
 
 const auth = program.command("auth").description("Authentication and bootstrap utilities");
 

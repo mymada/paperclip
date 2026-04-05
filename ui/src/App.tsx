@@ -1,10 +1,20 @@
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "@/lib/router";
+import { useEffect, useRef } from "react";
+import {
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { authApi } from "./api/auth";
 import { healthApi } from "./api/health";
+import { Artifacts } from "./pages/Artifacts";
+import { BoardChat } from "./pages/BoardChat";
 import { Dashboard } from "./pages/Dashboard";
 import { Companies } from "./pages/Companies";
 import { Agents } from "./pages/Agents";
@@ -14,8 +24,6 @@ import { ProjectDetail } from "./pages/ProjectDetail";
 import { ProjectWorkspaceDetail } from "./pages/ProjectWorkspaceDetail";
 import { Issues } from "./pages/Issues";
 import { IssueDetail } from "./pages/IssueDetail";
-import { Routines } from "./pages/Routines";
-import { RoutineDetail } from "./pages/RoutineDetail";
 import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
 import { Goals } from "./pages/Goals";
 import { GoalDetail } from "./pages/GoalDetail";
@@ -25,12 +33,10 @@ import { Costs } from "./pages/Costs";
 import { Activity } from "./pages/Activity";
 import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
-import { CompanySkills } from "./pages/CompanySkills";
-import { CompanyExport } from "./pages/CompanyExport";
-import { CompanyImport } from "./pages/CompanyImport";
 import { DesignGuide } from "./pages/DesignGuide";
-import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
 import { InstanceSettings } from "./pages/InstanceSettings";
+import { InstanceGeneralSettings } from "./pages/InstanceGeneralSettings";
+import { InstanceBackupSettings } from "./pages/InstanceBackupSettings";
 import { InstanceExperimentalSettings } from "./pages/InstanceExperimentalSettings";
 import { PluginManager } from "./pages/PluginManager";
 import { PluginSettings } from "./pages/PluginSettings";
@@ -40,14 +46,22 @@ import { OrgChart } from "./pages/OrgChart";
 import { NewAgent } from "./pages/NewAgent";
 import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
-import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
+import { CliAuthPage } from "./pages/CliAuth";
 import { NotFoundPage } from "./pages/NotFound";
+import { MyIssues } from "./pages/MyIssues";
+import { Parcours } from "./pages/Parcours";
+import { Routines } from "./pages/Routines";
+import { RoutineDetail } from "./pages/RoutineDetail";
+import { CompanySkills } from "./pages/CompanySkills";
+import { NotificationRules } from "./pages/NotificationRules";
+import { CompanyLessons } from "./pages/CompanyLessons";
+import { Plans } from "./pages/Plans";
+import { Channels } from "./pages/Channels";
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
 import { loadLastInboxTab } from "./lib/inbox";
-import { shouldRedirectCompanylessRouteToOnboarding } from "./lib/onboarding-route";
 
 function BootstrapPendingPage({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
   return (
@@ -116,17 +130,22 @@ function CloudAccessGate() {
   return <Outlet />;
 }
 
+function LegacyChatToBoardRoomRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: "/board-chat", search, hash }} replace />;
+}
+
 function boardRoutes() {
   return (
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
       <Route path="dashboard" element={<Dashboard />} />
+      <Route path="chat" element={<LegacyChatToBoardRoomRedirect />} />
+      <Route path="board-chat" element={<BoardChat />} />
+      <Route path="artifacts" element={<Artifacts />} />
       <Route path="onboarding" element={<OnboardingRoutePage />} />
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
-      <Route path="company/export/*" element={<CompanyExport />} />
-      <Route path="company/import" element={<CompanyImport />} />
-      <Route path="skills/*" element={<CompanySkills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
       <Route path="plugins/:pluginId" element={<PluginPage />} />
@@ -149,6 +168,15 @@ function boardRoutes() {
       <Route path="projects/:projectId/workspaces" element={<ProjectDetail />} />
       <Route path="projects/:projectId/configuration" element={<ProjectDetail />} />
       <Route path="projects/:projectId/budget" element={<ProjectDetail />} />
+      <Route path="my-issues" element={<MyIssues />} />
+      <Route path="parcours" element={<Parcours />} />
+      <Route path="routines" element={<Routines />} />
+      <Route path="routines/:routineId" element={<RoutineDetail />} />
+      <Route path="notification-rules" element={<NotificationRules />} />
+      <Route path="company-lessons" element={<CompanyLessons />} />
+      <Route path="plans" element={<Plans />} />
+      <Route path="channels" element={<Channels />} />
+      <Route path="skills/*" element={<CompanySkills />} />
       <Route path="issues" element={<Issues />} />
       <Route path="issues/all" element={<Navigate to="/issues" replace />} />
       <Route path="issues/active" element={<Navigate to="/issues" replace />} />
@@ -156,8 +184,6 @@ function boardRoutes() {
       <Route path="issues/done" element={<Navigate to="/issues" replace />} />
       <Route path="issues/recent" element={<Navigate to="/issues" replace />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
-      <Route path="routines" element={<Routines />} />
-      <Route path="routines/:routineId" element={<RoutineDetail />} />
       <Route path="execution-workspaces/:workspaceId" element={<ExecutionWorkspaceDetail />} />
       <Route path="goals" element={<Goals />} />
       <Route path="goals/:goalId" element={<GoalDetail />} />
@@ -172,7 +198,7 @@ function boardRoutes() {
       <Route path="inbox/recent" element={<Inbox />} />
       <Route path="inbox/unread" element={<Inbox />} />
       <Route path="inbox/all" element={<Inbox />} />
-      <Route path="inbox/new" element={<Navigate to="/inbox/mine" replace />} />
+      <Route path="inbox/new" element={<Navigate to="/inbox/recent" replace />} />
       <Route path="design-guide" element={<DesignGuide />} />
       <Route path="tests/ux/runs" element={<RunTranscriptUxLab />} />
       <Route path=":pluginRoutePath" element={<PluginPage />} />
@@ -187,16 +213,27 @@ function InboxRootRedirect() {
 
 function LegacySettingsRedirect() {
   const location = useLocation();
-  return <Navigate to={`/instance/settings/general${location.search}${location.hash}`} replace />;
+  return <Navigate to={`/instance/settings/heartbeats${location.search}${location.hash}`} replace />;
 }
 
 function OnboardingRoutePage() {
-  const { companies } = useCompany();
-  const { openOnboarding } = useDialog();
+  const { companies, loading } = useCompany();
+  const { onboardingOpen, openOnboarding } = useDialog();
   const { companyPrefix } = useParams<{ companyPrefix?: string }>();
+  const opened = useRef(false);
   const matchedCompany = companyPrefix
     ? companies.find((company) => company.issuePrefix.toUpperCase() === companyPrefix.toUpperCase()) ?? null
     : null;
+
+  useEffect(() => {
+    if (loading || opened.current || onboardingOpen) return;
+    opened.current = true;
+    if (matchedCompany) {
+      openOnboarding({ initialStep: 2, companyId: matchedCompany.id });
+      return;
+    }
+    openOnboarding();
+  }, [companyPrefix, loading, matchedCompany, onboardingOpen, openOnboarding]);
 
   const title = matchedCompany
     ? `Add another agent to ${matchedCompany.name}`
@@ -232,22 +269,19 @@ function OnboardingRoutePage() {
 
 function CompanyRootRedirect() {
   const { companies, selectedCompany, loading } = useCompany();
-  const location = useLocation();
+  const { onboardingOpen } = useDialog();
 
   if (loading) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
   }
 
+  // Keep the first-run onboarding mounted until it completes.
+  if (onboardingOpen) {
+    return <NoCompaniesStartPage autoOpen={false} />;
+  }
+
   const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
     return <NoCompaniesStartPage />;
   }
 
@@ -264,14 +298,6 @@ function UnprefixedBoardRedirect() {
 
   const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    if (
-      shouldRedirectCompanylessRouteToOnboarding({
-        pathname: location.pathname,
-        hasCompanies: false,
-      })
-    ) {
-      return <Navigate to="/onboarding" replace />;
-    }
     return <NoCompaniesStartPage />;
   }
 
@@ -283,8 +309,16 @@ function UnprefixedBoardRedirect() {
   );
 }
 
-function NoCompaniesStartPage() {
+function NoCompaniesStartPage({ autoOpen = true }: { autoOpen?: boolean }) {
   const { openOnboarding } = useDialog();
+  const opened = useRef(false);
+
+  useEffect(() => {
+    if (!autoOpen) return;
+    if (opened.current) return;
+    opened.current = true;
+    openOnboarding();
+  }, [autoOpen, openOnboarding]);
 
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -307,44 +341,51 @@ export function App() {
       <Routes>
         <Route path="auth" element={<AuthPage />} />
         <Route path="board-claim/:token" element={<BoardClaimPage />} />
-        <Route path="cli-auth/:id" element={<CliAuthPage />} />
         <Route path="invite/:token" element={<InviteLandingPage />} />
 
         <Route element={<CloudAccessGate />}>
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
-          <Route path="instance" element={<Navigate to="/instance/settings/general" replace />} />
+          <Route path="instance" element={<Navigate to="/instance/settings/heartbeats" replace />} />
           <Route path="instance/settings" element={<Layout />}>
-            <Route index element={<Navigate to="general" replace />} />
+            <Route index element={<Navigate to="heartbeats" replace />} />
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
+            <Route path="backup" element={<InstanceBackupSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
-          <Route path="companies" element={<UnprefixedBoardRedirect />} />
-          <Route path="issues" element={<UnprefixedBoardRedirect />} />
-          <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
-          <Route path="routines" element={<UnprefixedBoardRedirect />} />
-          <Route path="routines/:routineId" element={<UnprefixedBoardRedirect />} />
-          <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
-          <Route path="settings" element={<LegacySettingsRedirect />} />
-          <Route path="settings/*" element={<LegacySettingsRedirect />} />
-          <Route path="agents" element={<UnprefixedBoardRedirect />} />
-          <Route path="agents/new" element={<UnprefixedBoardRedirect />} />
-          <Route path="agents/:agentId" element={<UnprefixedBoardRedirect />} />
-          <Route path="agents/:agentId/:tab" element={<UnprefixedBoardRedirect />} />
-          <Route path="agents/:agentId/runs/:runId" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects/:projectId" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects/:projectId/overview" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects/:projectId/issues" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects/:projectId/issues/:filter" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects/:projectId/workspaces" element={<UnprefixedBoardRedirect />} />
-          <Route path="projects/:projectId/workspaces/:workspaceId" element={<UnprefixedBoardRedirect />} />
+          <Route path="cli-auth/:id" element={<CliAuthPage />} />
+          <Route path="dashboard/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="plugins/:pluginId" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/:projectId/budget" element={<UnprefixedBoardRedirect />} />
+          <Route path="companies/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="issues/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="chat/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="artifacts/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="agents/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="projects/*" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/configuration" element={<UnprefixedBoardRedirect />} />
+          <Route path="my-issues/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="parcours/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="routines/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="notification-rules/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="company-lessons/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="plans/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="channels/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="skills/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="goals/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="approvals/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="costs/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="activity/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="inbox/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="board-chat/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="org/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="company/settings/*" element={<UnprefixedBoardRedirect />} />
+          <Route path="design-guide/*" element={<UnprefixedBoardRedirect />} />
           <Route path="execution-workspaces/:workspaceId" element={<UnprefixedBoardRedirect />} />
-          <Route path="tests/ux/runs" element={<UnprefixedBoardRedirect />} />
+          <Route path="tests/ux/runs/*" element={<UnprefixedBoardRedirect />} />
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>

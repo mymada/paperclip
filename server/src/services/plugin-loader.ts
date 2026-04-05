@@ -42,6 +42,7 @@ import { logger } from "../middleware/logger.js";
 import { pluginManifestValidator } from "./plugin-manifest-validator.js";
 import { pluginCapabilityValidator } from "./plugin-capability-validator.js";
 import { pluginRegistryService } from "./plugin-registry.js";
+import { STANDARD_LIBRARY_PLUGINS } from "./standard-library.js";
 import type { PluginWorkerManager, WorkerStartOptions, WorkerToHostHandlers } from "./plugin-worker-manager.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
 import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
@@ -796,6 +797,21 @@ export function pluginLoader(
       throw new Error("Either packageName or localPath must be provided");
     }
 
+    // Official Standard Library check
+    if (packageName?.startsWith("@paperclipai/std-")) {
+      const id = "paperclip." + packageName.split("-").pop();
+      const lib = STANDARD_LIBRARY_PLUGINS.find((p) => p.id === id);
+      if (lib) {
+        return {
+          packagePath: `standard-lib:${id}`,
+          packageName,
+          version: lib.manifest.version,
+          source: "standard-lib" as any,
+          manifest: lib.manifest,
+        };
+      }
+    }
+
     const targetInstallDir = installDir ?? localPluginDir;
 
     // Step 1 & 2: Resolve and install package
@@ -1023,6 +1039,18 @@ export function pluginLoader(
           }
         }
         allErrors.push(...npmResult.errors);
+      }
+
+      // 3. Official Standard Library
+      sources.push("standard-lib" as any);
+      for (const lib of STANDARD_LIBRARY_PLUGINS) {
+        allDiscovered.push({
+          packagePath: `standard-lib:${lib.id}`,
+          packageName: `@paperclipai/std-${lib.id.split(".").pop()}`,
+          version: lib.manifest.version,
+          source: "standard-lib" as any,
+          manifest: lib.manifest,
+        });
       }
 
       // Future: registry source (options.registryUrl)

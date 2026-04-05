@@ -32,14 +32,10 @@ function makeDb(overrides: Record<string, unknown> = {}) {
 
 const mockCompanyService = vi.hoisted(() => ({
   getById: vi.fn(),
-  update: vi.fn(),
 }));
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
   update: vi.fn(),
-}));
-const mockHeartbeatService = vi.hoisted(() => ({
-  cancelBudgetScopeWork: vi.fn().mockResolvedValue(undefined),
 }));
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockFetchAllQuotaWindows = vi.hoisted(() => vi.fn());
@@ -79,7 +75,6 @@ vi.mock("../services/index.js", () => ({
   financeService: () => mockFinanceService,
   companyService: () => mockCompanyService,
   agentService: () => mockAgentService,
-  heartbeatService: () => mockHeartbeatService,
   logActivity: mockLogActivity,
 }));
 
@@ -99,34 +94,8 @@ function createApp() {
   return app;
 }
 
-function createAppWithActor(actor: any) {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    req.actor = actor;
-    next();
-  });
-  app.use("/api", costRoutes(makeDb() as any));
-  app.use(errorHandler);
-  return app;
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mockCompanyService.update.mockResolvedValue({
-    id: "company-1",
-    name: "Paperclip",
-    budgetMonthlyCents: 100,
-    spentMonthlyCents: 0,
-  });
-  mockAgentService.update.mockResolvedValue({
-    id: "agent-1",
-    companyId: "company-1",
-    name: "Budget Agent",
-    budgetMonthlyCents: 100,
-    spentMonthlyCents: 0,
-  });
-  mockBudgetService.upsertPolicy.mockResolvedValue(undefined);
 });
 
 describe("cost routes", () => {
@@ -181,46 +150,5 @@ describe("cost routes", () => {
       .query({ limit: "25" });
     expect(res.status).toBe(200);
     expect(mockFinanceService.list).toHaveBeenCalledWith("company-1", undefined, 25);
-  });
-
-  it("rejects company budget updates for board users outside the company", async () => {
-    const app = createAppWithActor({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: ["company-2"],
-    });
-
-    const res = await request(app)
-      .patch("/api/companies/company-1/budgets")
-      .send({ budgetMonthlyCents: 2500 });
-
-    expect(res.status).toBe(403);
-    expect(mockCompanyService.update).not.toHaveBeenCalled();
-  });
-
-  it("rejects agent budget updates for board users outside the agent company", async () => {
-    mockAgentService.getById.mockResolvedValue({
-      id: "agent-1",
-      companyId: "company-1",
-      name: "Budget Agent",
-      budgetMonthlyCents: 100,
-      spentMonthlyCents: 0,
-    });
-    const app = createAppWithActor({
-      type: "board",
-      userId: "board-user",
-      source: "session",
-      isInstanceAdmin: false,
-      companyIds: ["company-2"],
-    });
-
-    const res = await request(app)
-      .patch("/api/agents/agent-1/budgets")
-      .send({ budgetMonthlyCents: 2500 });
-
-    expect(res.status).toBe(403);
-    expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 });

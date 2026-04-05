@@ -191,6 +191,38 @@ export interface PluginUiDeclaration {
 }
 
 // ---------------------------------------------------------------------------
+// Bootstrap agent declaration — auto-created when plugin is installed
+// ---------------------------------------------------------------------------
+
+/**
+ * Declares an agent that the server should auto-create for each company when
+ * the plugin is installed. Creation is idempotent: if an agent with the same
+ * `slug` already exists in `metadata.pluginBootstrapSlug`, it is skipped.
+ */
+export interface PluginBootstrapAgent {
+  /** Stable slug used for idempotency and reporting-chain resolution. */
+  slug: string;
+  /** Display name of the agent. */
+  name: string;
+  /** Agent role (default `"agent"`). */
+  role?: string;
+  /** Optional job title. */
+  title?: string;
+  /** Adapter type (default `"claude_local"`). */
+  adapterType?: string;
+  /** Adapter configuration (e.g. model, temperature). */
+  adapterConfig?: Record<string, unknown>;
+  /** Skill slugs to attach to the agent. */
+  skills?: string[];
+  /** Inline markdown instructions written to the agent's managed bundle. */
+  instructions?: string;
+  /** Slug of another `bootstrapAgents` entry this agent reports to. */
+  reportsToSlug?: string;
+  /** Emoji or icon identifier. */
+  icon?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Plugin Manifest V1
 // ---------------------------------------------------------------------------
 
@@ -232,6 +264,8 @@ export interface PaperclipPluginManifestV1 {
     /** Path to the UI bundle directory (required when `ui.slots` is declared). */
     ui?: string;
   };
+  /** Docker image for native agent plugins ("Fast Hands"). */
+  dockerImage?: string;
   /** JSON Schema for operator-editable instance configuration. */
   instanceConfigSchema?: JsonSchema;
   /** Scheduled jobs this plugin declares. Requires `jobs.schedule` capability. */
@@ -245,6 +279,12 @@ export interface PaperclipPluginManifestV1 {
    * Prefer `ui.launchers` for new manifests.
    */
   launchers?: PluginLauncherDeclaration[];
+  /**
+   * Agents the server should auto-create for each company when the plugin is
+   * installed. Creation is idempotent — existing agents (matched by
+   * `metadata.pluginBootstrapSlug`) are skipped.
+   */
+  bootstrapAgents?: PluginBootstrapAgent[];
   /** UI bundle declarations. Requires `entrypoints.ui` when populated. */
   ui?: PluginUiDeclaration;
 }

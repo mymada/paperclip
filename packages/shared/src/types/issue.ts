@@ -42,6 +42,7 @@ export interface IssueLabel {
   companyId: string;
   name: string;
   color: string;
+  proofRequirementTier: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -49,6 +50,8 @@ export interface IssueLabel {
 export interface IssueAssigneeAdapterOverrides {
   adapterConfig?: Record<string, unknown>;
   useProjectWorkspace?: boolean;
+  systemPromptSuffix?: string | null;
+  reviewMode?: boolean;
 }
 
 export type DocumentFormat = "markdown";
@@ -123,6 +126,9 @@ export interface Issue {
   originRunId?: string | null;
   requestDepth: number;
   billingCode: string | null;
+  proofRequirementTier: number | null;
+  reviewIterationCount: number;
+  resolutionPayload: Record<string, unknown> | null;
   assigneeAdapterOverrides: IssueAssigneeAdapterOverrides | null;
   executionWorkspaceId: string | null;
   executionWorkspacePreference: string | null;

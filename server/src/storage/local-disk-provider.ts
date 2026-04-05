@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import type { StorageProvider, GetObjectResult, HeadObjectResult } from "./types.js";
@@ -46,7 +47,7 @@ export function createLocalDiskStorageProvider(baseDir: string): StorageProvider
       const dir = path.dirname(targetPath);
       await fs.mkdir(dir, { recursive: true });
 
-      const tempPath = `${targetPath}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const tempPath = `${targetPath}.tmp-${Date.now()}-${randomBytes(4).toString("hex")}`;
       await fs.writeFile(tempPath, input.body);
       await fs.rename(tempPath, targetPath);
     },

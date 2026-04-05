@@ -54,6 +54,7 @@ export function Layout() {
   const { togglePanelVisible } = usePanel();
   const {
     companies,
+    error: companiesError,
     loading: companiesLoading,
     selectedCompany,
     selectedCompanyId,
@@ -76,7 +77,11 @@ export function Layout() {
     return companies.find((company) => company.issuePrefix.toUpperCase() === requestedPrefix) ?? null;
   }, [companies, companyPrefix]);
   const hasUnknownCompanyPrefix =
-    Boolean(companyPrefix) && !companiesLoading && companies.length > 0 && !matchedCompany;
+    Boolean(companyPrefix) &&
+    !isInstanceSettingsRoute &&
+    !companiesLoading &&
+    companies.length > 0 &&
+    !matchedCompany;
   const { data: health } = useQuery({
     queryKey: queryKeys.health,
     queryFn: () => healthApi.get(),
@@ -93,13 +98,13 @@ export function Layout() {
   }).data?.keyboardShortcuts === true;
 
   useEffect(() => {
-    if (companiesLoading || onboardingTriggered.current) return;
+    if (companiesLoading || companiesError || onboardingTriggered.current) return;
     if (health?.deploymentMode === "authenticated") return;
     if (companies.length === 0) {
       onboardingTriggered.current = true;
       openOnboarding();
     }
-  }, [companies, companiesLoading, openOnboarding, health?.deploymentMode]);
+  }, [companies, companiesError, companiesLoading, openOnboarding, health?.deploymentMode]);
 
   useEffect(() => {
     if (!companyPrefix || companiesLoading || companies.length === 0) return;
@@ -108,8 +113,14 @@ export function Layout() {
       const fallback = (selectedCompanyId ? companies.find((company) => company.id === selectedCompanyId) : null)
         ?? companies[0]
         ?? null;
-      if (fallback && selectedCompanyId !== fallback.id) {
-        setSelectedCompanyId(fallback.id, { source: "route_sync" });
+
+      if (fallback) {
+        if (selectedCompanyId !== fallback.id) {
+          setSelectedCompanyId(fallback.id, { source: "route_sync" });
+        }
+        // Redirect to the correct company prefix
+        const suffix = location.pathname.replace(/^\/[^/]+/, "");
+        navigate(`/${fallback.issuePrefix}${suffix}${location.search}${location.hash}`, { replace: true });
       }
       return;
     }
@@ -240,6 +251,8 @@ export function Layout() {
     };
   }, [isMobile, updateMobileNavVisibility]);
 
+  const showCompanyRail = companies.length >= 1;
+
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
 
@@ -299,10 +312,10 @@ export function Layout() {
             )}
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <CompanyRail />
+              {showCompanyRail && <CompanyRail />}
               {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
             </div>
-            <div className="border-t border-r border-border px-3 py-2 bg-background">
+            <div className="border-t border-r border-border px-3 py-3 bg-background">
               <div className="flex items-center gap-1">
                 <a
                   href="https://docs.paperclip.ing/"
@@ -350,7 +363,7 @@ export function Layout() {
         ) : (
           <div className="flex h-full flex-col shrink-0">
             <div className="flex flex-1 min-h-0">
-              <CompanyRail />
+              {showCompanyRail && <CompanyRail />}
               <div
                 className={cn(
                   "overflow-hidden transition-[width] duration-100 ease-out",
@@ -360,7 +373,7 @@ export function Layout() {
                 {isInstanceSettingsRoute ? <InstanceSidebar /> : <Sidebar />}
               </div>
             </div>
-            <div className="border-t border-r border-border px-3 py-2">
+            <div className="border-t border-r border-border px-3 py-3">
               <div className="flex items-center gap-1">
                 <a
                   href="https://docs.paperclip.ing/"
@@ -410,7 +423,8 @@ export function Layout() {
         <div className={cn("flex min-w-0 flex-col", isMobile ? "w-full" : "h-full flex-1")}>
           <div
             className={cn(
-              isMobile && "sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85",
+              isMobile ? "sticky top-0 z-20" : "z-20",
+              "glass-effect"
             )}
           >
             <BreadcrumbBar />

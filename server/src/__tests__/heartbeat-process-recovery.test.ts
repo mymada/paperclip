@@ -1,20 +1,22 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  applyPendingMigrations,
+  createDb,
+  ensurePostgresDatabase,
   agents,
   agentWakeupRequests,
   companies,
-  createDb,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
 } from "@paperclipai/db";
-import {
-  getEmbeddedPostgresTestSupport,
-  startEmbeddedPostgresTestDatabase,
-} from "./helpers/embedded-postgres.js";
 import { runningProcesses } from "../adapters/index.ts";
 const mockTelemetryClient = vi.hoisted(() => ({ track: vi.fn() }));
 const mockTrackAgentFirstHeartbeat = vi.hoisted(() => vi.fn());
@@ -34,13 +36,72 @@ vi.mock("@paperclipai/shared/telemetry", async () => {
 });
 
 import { heartbeatService } from "../services/heartbeat.ts";
-const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
-const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
-if (!embeddedPostgresSupport.supported) {
-  console.warn(
-    `Skipping embedded Postgres heartbeat recovery tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
-  );
+type EmbeddedPostgresInstance = {
+  initialise(): Promise<void>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+};
+
+type EmbeddedPostgresCtor = new (opts: {
+  databaseDir: string;
+  user: string;
+  password: string;
+  port: number;
+  persistent: boolean;
+  initdbFlags?: string[];
+  onLog?: (message: unknown) => void;
+  onError?: (message: unknown) => void;
+}) => EmbeddedPostgresInstance;
+
+async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
+  const mod = await import("embedded-postgres");
+  return mod.default as EmbeddedPostgresCtor;
+}
+
+async function getAvailablePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate test port")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function startTempDatabase() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-heartbeat-recovery-"));
+  fs.chmodSync(dataDir, 0o777);
+  const port = await getAvailablePort();
+  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
+  const instance = new EmbeddedPostgres({
+    databaseDir: dataDir,
+    user: "paperclip",
+    password: "paperclip",
+    port,
+    persistent: true,
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    onLog: (msg) => console.log("[Postgres Log]", msg),
+    onError: (msg) => console.error("[Postgres Error]", msg),
+  });
+  await instance.initialise();
+  await instance.start();
+
+  const adminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/postgres`;
+  await ensurePostgresDatabase(adminConnectionString, "paperclip");
+  const connectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
+  await applyPendingMigrations(connectionString);
+  return { connectionString, instance, dataDir };
 }
 
 function spawnAliveProcess() {
@@ -49,14 +110,17 @@ function spawnAliveProcess() {
   });
 }
 
-describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
+describe("heartbeat orphaned process recovery", () => {
   let db!: ReturnType<typeof createDb>;
-  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+  let instance: EmbeddedPostgresInstance | null = null;
+  let dataDir = "";
   const childProcesses = new Set<ChildProcess>();
 
   beforeAll(async () => {
-    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-heartbeat-recovery-");
-    db = createDb(tempDb.connectionString);
+    const started = await startTempDatabase();
+    db = createDb(started.connectionString);
+    instance = started.instance;
+    dataDir = started.dataDir;
   }, 20_000);
 
   afterEach(async () => {
@@ -80,7 +144,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
     childProcesses.clear();
     runningProcesses.clear();
-    await tempDb?.cleanup();
+    await instance?.stop();
+    if (dataDir) {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   async function seedRunFixture(input?: {
@@ -252,7 +319,11 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .where(eq(issues.id, issueId))
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBeNull();
-    expect(issue?.checkoutRunId).toBe(runId);
+    // checkoutRunId must be cleared when the max-retry path is taken (no more retries):
+    // the issue is reset to "todo" so the next heartbeat can checkout fresh instead of
+    // accumulating "run ownership conflict" 403s from a stale checkout lock.
+    expect(issue?.checkoutRunId).toBeNull();
+    expect(issue?.status).toBe("todo");
   });
 
   it("clears the detached warning when the run reports activity again", async () => {

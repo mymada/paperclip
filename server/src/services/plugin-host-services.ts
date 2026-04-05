@@ -58,6 +58,8 @@ const TELEMETRY_EVENT_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
  * dns.lookup may return depending on OS configuration.
  */
 function isPrivateIP(ip: string): boolean {
+  if (process.env.ALLOW_PRIVATE_IPS === "true") return false;
+
   const lower = ip.toLowerCase();
 
   // Unwrap IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) and re-check as IPv4

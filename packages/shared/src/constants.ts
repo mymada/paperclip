@@ -133,6 +133,20 @@ export const INBOX_MINE_ISSUE_STATUS_FILTER = INBOX_MINE_ISSUE_STATUSES.join(","
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 
+export const PROOF_TIERS = [0, 1, 2, 3] as const;
+export type ProofTier = (typeof PROOF_TIERS)[number];
+
+export const RBAC_SCOPES = [
+  "finance",
+  "strategic_vision",
+  "source_code",
+  "legal",
+  "hr",
+  "ops",
+  "general",
+] as const;
+export type RbacScope = (typeof RBAC_SCOPES)[number];
+
 export const ISSUE_ORIGIN_KINDS = ["manual", "routine_execution"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 
@@ -182,6 +196,9 @@ export type RoutineRunStatus = (typeof ROUTINE_RUN_STATUSES)[number];
 export const ROUTINE_RUN_SOURCES = ["schedule", "manual", "api", "webhook"] as const;
 export type RoutineRunSource = (typeof ROUTINE_RUN_SOURCES)[number];
 
+export const COMPANY_LESSON_STATUSES = ["draft", "active", "archived"] as const;
+export type CompanyLessonStatus = (typeof COMPANY_LESSON_STATUSES)[number];
+
 export const PAUSE_REASONS = ["manual", "budget", "system"] as const;
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 
@@ -198,7 +215,13 @@ export const PROJECT_COLORS = [
   "#3b82f6", // blue
 ] as const;
 
-export const APPROVAL_TYPES = ["hire_agent", "approve_ceo_strategy", "budget_override_required"] as const;
+export const APPROVAL_TYPES = [
+  "hire_agent",
+  "approve_ceo_strategy",
+  "budget_override_required",
+  "peer_review",
+  "llm_judge",
+] as const;
 export type ApprovalType = (typeof APPROVAL_TYPES)[number];
 
 export const APPROVAL_STATUSES = [
@@ -331,6 +354,10 @@ export const LIVE_EVENT_TYPES = [
   "plugin.ui.updated",
   "plugin.worker.crashed",
   "plugin.worker.restarted",
+  "plan.updated",
+  "delegation.updated",
+  "channel.message.received",
+  "notification.dispatched",
 ] as const;
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
 

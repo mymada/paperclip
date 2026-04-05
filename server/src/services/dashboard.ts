@@ -4,35 +4,94 @@ import { agents, approvals, companies, costEvents, issues } from "@paperclipai/d
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
 
+function currentUtcMonthStart(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+}
+
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
   return {
+    alertSignals: async (companyId: string) => {
+      const now = new Date();
+      const monthStart = currentUtcMonthStart(now);
+
+      const [companyRow, [agentErrorRow], [monthSpendRow]] = await Promise.all([
+        db
+          .select({
+            id: companies.id,
+            budgetMonthlyCents: companies.budgetMonthlyCents,
+          })
+          .from(companies)
+          .where(eq(companies.id, companyId))
+          .then((rows) => rows[0] ?? null),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(agents)
+          .where(and(eq(agents.companyId, companyId), eq(agents.status, "error"))),
+        db
+          .select({ monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
+          .from(costEvents)
+          .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, monthStart))),
+      ]);
+
+      if (!companyRow) throw notFound("Company not found");
+
+      const monthSpendCents = Number(monthSpendRow?.monthSpend ?? 0);
+      const monthBudgetCents = companyRow.budgetMonthlyCents;
+      const monthUtilizationPercent =
+        monthBudgetCents > 0 ? Number(((monthSpendCents / monthBudgetCents) * 100).toFixed(2)) : 0;
+
+      return {
+        agentErrorCount: Number(agentErrorRow?.count ?? 0),
+        monthSpendCents,
+        monthBudgetCents,
+        monthUtilizationPercent,
+      };
+    },
+
     summary: async (companyId: string) => {
-      const company = await db
-        .select()
-        .from(companies)
-        .where(eq(companies.id, companyId))
-        .then((rows) => rows[0] ?? null);
+      const now = new Date();
+      const monthStart = currentUtcMonthStart(now);
+      const staleThreshold = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+      const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-      if (!company) throw notFound("Company not found");
+      const [
+        companyRow,
+        agentRows,
+        [issuesStats],
+        pendingApprovals,
+        [monthSpendRow],
+        budgetStats,
+      ] = await Promise.all([
+        db.select().from(companies).where(eq(companies.id, companyId)).then((rows) => rows[0] ?? null),
+        db.select({ status: agents.status, count: sql<number>`count(*)` })
+          .from(agents)
+          .where(eq(agents.companyId, companyId))
+          .groupBy(agents.status),
+        // ⚡ Bolt: Combines 4 separate queries on `issues` into a single query using
+        // conditional aggregations, saving multiple database round trips.
+        db.select({
+          open: sql<number>`coalesce(sum(case when ${issues.status} not in ('done', 'cancelled') then 1 else 0 end), 0)::int`,
+          inProgress: sql<number>`coalesce(sum(case when ${issues.status} = 'in_progress' then 1 else 0 end), 0)::int`,
+          blocked: sql<number>`coalesce(sum(case when ${issues.status} = 'blocked' then 1 else 0 end), 0)::int`,
+          done: sql<number>`coalesce(sum(case when ${issues.status} = 'done' then 1 else 0 end), 0)::int`,
+          criticalCount: sql<number>`coalesce(sum(case when ${issues.priority} = 'critical' and ${issues.status} not in ('done', 'cancelled') then 1 else 0 end), 0)::int`,
+          stalledCount: sql<number>`coalesce(sum(case when ${issues.status} = 'in_progress' and ${issues.updatedAt} < ${staleThreshold}::timestamptz then 1 else 0 end), 0)::int`,
+          doneThisWeekCount: sql<number>`coalesce(sum(case when ${issues.status} = 'done' and ${issues.completedAt} >= ${weekStart}::timestamptz then 1 else 0 end), 0)::int`,
+        })
+          .from(issues)
+          .where(eq(issues.companyId, companyId)),
+        db.select({ count: sql<number>`count(*)` })
+          .from(approvals)
+          .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
+          .then((rows) => Number(rows[0]?.count ?? 0)),
+        db.select({ monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int` })
+          .from(costEvents)
+          .where(and(eq(costEvents.companyId, companyId), gte(costEvents.occurredAt, monthStart))),
+        budgets.dashboardStats(companyId),
+      ]);
 
-      const agentRows = await db
-        .select({ status: agents.status, count: sql<number>`count(*)` })
-        .from(agents)
-        .where(eq(agents.companyId, companyId))
-        .groupBy(agents.status);
-
-      const taskRows = await db
-        .select({ status: issues.status, count: sql<number>`count(*)` })
-        .from(issues)
-        .where(eq(issues.companyId, companyId))
-        .groupBy(issues.status);
-
-      const pendingApprovals = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(approvals)
-        .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
-        .then((rows) => Number(rows[0]?.count ?? 0));
+      if (!companyRow) throw notFound("Company not found");
 
       const agentCounts: Record<string, number> = {
         active: 0,
@@ -48,39 +107,21 @@ export function dashboardService(db: Db) {
       }
 
       const taskCounts: Record<string, number> = {
-        open: 0,
-        inProgress: 0,
-        blocked: 0,
-        done: 0,
+        open: issuesStats?.open ?? 0,
+        inProgress: issuesStats?.inProgress ?? 0,
+        blocked: issuesStats?.blocked ?? 0,
+        done: issuesStats?.done ?? 0,
       };
-      for (const row of taskRows) {
-        const count = Number(row.count);
-        if (row.status === "in_progress") taskCounts.inProgress += count;
-        if (row.status === "blocked") taskCounts.blocked += count;
-        if (row.status === "done") taskCounts.done += count;
-        if (row.status !== "done" && row.status !== "cancelled") taskCounts.open += count;
-      }
 
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const [{ monthSpend }] = await db
-        .select({
-          monthSpend: sql<number>`coalesce(sum(${costEvents.costCents}), 0)::int`,
-        })
-        .from(costEvents)
-        .where(
-          and(
-            eq(costEvents.companyId, companyId),
-            gte(costEvents.occurredAt, monthStart),
-          ),
-        );
+      const criticalCount = issuesStats?.criticalCount ?? 0;
+      const stalledCount = issuesStats?.stalledCount ?? 0;
+      const doneThisWeekCount = issuesStats?.doneThisWeekCount ?? 0;
 
-      const monthSpendCents = Number(monthSpend);
+      const monthSpendCents = Number(monthSpendRow?.monthSpend ?? 0);
       const utilization =
-        company.budgetMonthlyCents > 0
-          ? (monthSpendCents / company.budgetMonthlyCents) * 100
+        companyRow.budgetMonthlyCents > 0
+          ? (monthSpendCents / companyRow.budgetMonthlyCents) * 100
           : 0;
-      const budgetOverview = await budgets.overview(companyId);
 
       return {
         companyId,
@@ -91,17 +132,22 @@ export function dashboardService(db: Db) {
           error: agentCounts.error,
         },
         tasks: taskCounts,
+        issues: {
+          criticalCount,
+          stalledCount,
+          doneThisWeekCount,
+        },
         costs: {
           monthSpendCents,
-          monthBudgetCents: company.budgetMonthlyCents,
+          monthBudgetCents: companyRow.budgetMonthlyCents,
           monthUtilizationPercent: Number(utilization.toFixed(2)),
         },
         pendingApprovals,
         budgets: {
-          activeIncidents: budgetOverview.activeIncidents.length,
-          pendingApprovals: budgetOverview.pendingApprovalCount,
-          pausedAgents: budgetOverview.pausedAgentCount,
-          pausedProjects: budgetOverview.pausedProjectCount,
+          activeIncidents: budgetStats.activeIncidents,
+          pendingApprovals: budgetStats.pendingApprovalCount,
+          pausedAgents: budgetStats.pausedAgentCount,
+          pausedProjects: budgetStats.pausedProjectCount,
         },
       };
     },

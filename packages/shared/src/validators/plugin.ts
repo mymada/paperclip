@@ -337,6 +337,31 @@ export const pluginLauncherDeclarationSchema = z.object({
 export type PluginLauncherDeclarationInput = z.infer<typeof pluginLauncherDeclarationSchema>;
 
 // ---------------------------------------------------------------------------
+// Bootstrap agent declaration schema
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates a single agent declaration inside `bootstrapAgents`.
+ * When a plugin is installed, the server auto-creates these agents for every
+ * company that has the plugin enabled — skipping any that already exist
+ * (identified by `metadata.pluginBootstrapSlug`).
+ */
+export const pluginBootstrapAgentSchema = z.object({
+  slug: z.string().min(1),
+  name: z.string().min(1),
+  role: z.string().min(1).default("agent"),
+  title: z.string().min(1).optional(),
+  adapterType: z.string().min(1).default("claude_local"),
+  adapterConfig: z.record(z.unknown()).optional(),
+  skills: z.array(z.string()).optional(),
+  instructions: z.string().optional(),
+  reportsToSlug: z.string().optional(),
+  icon: z.string().optional(),
+});
+
+export type PluginBootstrapAgentInput = z.infer<typeof pluginBootstrapAgentSchema>;
+
+// ---------------------------------------------------------------------------
 // Plugin Manifest V1 schema
 // ---------------------------------------------------------------------------
 
@@ -406,6 +431,7 @@ export const pluginManifestV1Schema = z.object({
   webhooks: z.array(pluginWebhookDeclarationSchema).optional(),
   tools: z.array(pluginToolDeclarationSchema).optional(),
   launchers: z.array(pluginLauncherDeclarationSchema).optional(),
+  bootstrapAgents: z.array(pluginBootstrapAgentSchema).optional(),
   ui: z.object({
     slots: z.array(pluginUiSlotDeclarationSchema).min(1).optional(),
     launchers: z.array(pluginLauncherDeclarationSchema).optional(),

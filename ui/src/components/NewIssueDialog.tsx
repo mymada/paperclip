@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { pickTextColorForSolidBg } from "@/lib/color-contrast";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
@@ -57,6 +56,15 @@ import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySel
 const DRAFT_KEY = "paperclip:issue-draft";
 const DEBOUNCE_MS = 800;
 
+/** Return black or white hex based on background luminance (WCAG perceptual weights). */
+function getContrastTextColor(hexColor: string): string {
+  const hex = hexColor.replace("#", "");
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.5 ? "#000000" : "#ffffff";
+}
 
 interface IssueDraft {
   title: string;
@@ -371,8 +379,6 @@ export function NewIssueDialog() {
         id: `agent:${agent.id}`,
         name: agent.name,
         kind: "agent",
-        agentId: agent.id,
-        agentIcon: agent.icon,
       });
     }
     for (const project of orderedProjects) {
@@ -427,10 +433,6 @@ export function NewIssueDialog() {
     },
     onSuccess: ({ issue, companyId, failures }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listMineByMe(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listTouchedByMe(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.issues.listUnreadTouchedByMe(companyId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(companyId) });
       if (draftTimer.current) clearTimeout(draftTimer.current);
       if (failures.length > 0) {
         const prefix = (companies.find((company) => company.id === companyId)?.issuePrefix ?? "").trim();
@@ -815,7 +817,7 @@ export function NewIssueDialog() {
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
   const canDiscardDraft = hasDraft || hasSavedDraft;
   const createIssueErrorMessage =
-    createIssue.error instanceof Error ? createIssue.error.message : "Failed to create issue. Try again.";
+    createIssue.error instanceof Error ? createIssue.error.message : "Failed to create task. Try again.";
   const stagedDocuments = stagedFiles.filter((file) => file.kind === "document");
   const stagedAttachments = stagedFiles.filter((file) => file.kind === "attachment");
 
@@ -911,7 +913,7 @@ export function NewIssueDialog() {
                     dialogCompany?.brandColor
                       ? {
                           backgroundColor: dialogCompany.brandColor,
-                          color: pickTextColorForSolidBg(dialogCompany.brandColor),
+                          color: getContrastTextColor(dialogCompany.brandColor),
                         }
                       : undefined
                   }
@@ -941,7 +943,7 @@ export function NewIssueDialog() {
                         c.brandColor
                           ? {
                               backgroundColor: c.brandColor,
-                              color: pickTextColorForSolidBg(c.brandColor),
+                              color: getContrastTextColor(c.brandColor),
                             }
                           : undefined
                       }
@@ -963,6 +965,7 @@ export function NewIssueDialog() {
               className="text-muted-foreground"
               onClick={() => setExpanded(!expanded)}
               disabled={createIssue.isPending}
+              aria-label={expanded ? "Minimize dialog" : "Maximize dialog"}
             >
               {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
             </Button>
@@ -972,6 +975,7 @@ export function NewIssueDialog() {
               className="text-muted-foreground"
               onClick={() => closeNewIssue()}
               disabled={createIssue.isPending}
+              aria-label="Close dialog"
             >
               <span className="text-lg leading-none">&times;</span>
             </Button>
@@ -982,7 +986,7 @@ export function NewIssueDialog() {
         <div className="px-4 pt-4 pb-2 shrink-0">
           <textarea
             className="w-full text-lg font-semibold bg-transparent outline-none resize-none overflow-hidden placeholder:text-muted-foreground/50"
-            placeholder="Issue title"
+            placeholder="Task title"
             rows={1}
             value={title}
             onChange={(e) => {
@@ -1209,7 +1213,6 @@ export function NewIssueDialog() {
                   <div className="flex items-center justify-between rounded-md border border-border px-2 py-1.5">
                     <div className="text-xs text-muted-foreground">Enable Chrome (--chrome)</div>
                     <button
-                      data-slot="toggle"
                       className={cn(
                         "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
                         assigneeChrome ? "bg-green-600" : "bg-muted"
@@ -1286,6 +1289,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
+                          aria-label="Remove document"
                           title="Remove document"
                         >
                           <X className="h-3.5 w-3.5" />
@@ -1317,6 +1321,7 @@ export function NewIssueDialog() {
                           className="shrink-0 text-muted-foreground"
                           onClick={() => removeStagedFile(file.id)}
                           disabled={createIssue.isPending}
+                          aria-label="Remove attachment"
                           title="Remove attachment"
                         >
                           <X className="h-3.5 w-3.5" />
@@ -1465,7 +1470,7 @@ export function NewIssueDialog() {
             >
               <span className="inline-flex items-center justify-center gap-1.5">
                 {createIssue.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                <span>{createIssue.isPending ? "Creating..." : "Create Issue"}</span>
+                <span>{createIssue.isPending ? "Creating..." : "Create Task"}</span>
               </span>
             </Button>
           </div>

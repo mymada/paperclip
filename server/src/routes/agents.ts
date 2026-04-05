@@ -2,8 +2,8 @@ import { Router, type Request } from "express";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable } from "@paperclipai/db";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { agents as agentsTable, companies, heartbeatRuns, issues as issuesTable, projectWorkspaces } from "@paperclipai/db";
+import { and, desc, eq, inArray, isNotNull, not, sql } from "drizzle-orm";
 import {
   agentSkillSyncSchema,
   agentMineInboxQuerySchema,
@@ -64,6 +64,8 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
+
+import { applyMioraOptimizations } from "../services/miora-optimizations.js";
 
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -538,15 +540,25 @@ export function agentRoutes(db: Db) {
     const promptTemplate = typeof adapterConfig.promptTemplate === "string"
       ? adapterConfig.promptTemplate
       : "";
-    const files = promptTemplate.trim().length === 0
-      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role))
+    let files = promptTemplate.trim().length === 0
+      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role), agent.name)
       : { "AGENTS.md": promptTemplate };
+      
+    // Apply Miora structural rules and Token Economics dynamically
+    files = applyMioraOptimizations(agent, files);
+    
+    // Default to thin context mode for new agents to save tokens (Miora optimization)
+    const nextAdapterConfig = { ...adapterConfig };
+    if (!nextAdapterConfig.contextMode) {
+      nextAdapterConfig.contextMode = "thin";
+    }
+
     const materialized = await instructions.materializeManagedBundle(
       agent,
       files,
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
-    const nextAdapterConfig = { ...materialized.adapterConfig };
+    Object.assign(nextAdapterConfig, materialized.adapterConfig);
     delete nextAdapterConfig.promptTemplate;
 
     const updated = await svc.update(agent.id, { adapterConfig: nextAdapterConfig });
@@ -632,17 +644,24 @@ export function agentRoutes(db: Db) {
     adapterConfig: Record<string, unknown>,
     requestedDesiredSkills: string[] | undefined,
   ) {
-    if (!requestedDesiredSkills) {
-      return {
-        adapterConfig,
-        desiredSkills: null as string[] | null,
-        runtimeSkillEntries: null as Awaited<ReturnType<typeof companySkills.listRuntimeSkillEntries>> | null,
-      };
+    const finalRequestedSkills = requestedDesiredSkills ? [...requestedDesiredSkills] : [];
+
+    // Auto-inject Miora core skills for all agents (only if installed in the company)
+    const mioraCoreSkills = ["miora-patterns", "miora-test"];
+    const hasMissingCoreSkills = mioraCoreSkills.some((skill) => !finalRequestedSkills.includes(skill));
+    if (hasMissingCoreSkills) {
+      const installedSkills = await companySkills.listFull(companyId);
+      const installedKeys = new Set(installedSkills.map((s) => s.key));
+      for (const skill of mioraCoreSkills) {
+        if (!finalRequestedSkills.includes(skill) && installedKeys.has(skill)) {
+          finalRequestedSkills.push(skill);
+        }
+      }
     }
 
     const resolvedRequestedSkills = await companySkills.resolveRequestedSkillKeys(
       companyId,
-      requestedDesiredSkills,
+      finalRequestedSkills,
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(companyId, {
       materializeMissing: shouldMaterializeRuntimeSkillsForAdapter(adapterType),
@@ -1064,7 +1083,7 @@ export function agentRoutes(db: Db) {
     const issuesSvc = issueService(db);
     const rows = await issuesSvc.list(req.actor.companyId, {
       assigneeAgentId: req.actor.agentId,
-      status: "todo,in_progress,blocked",
+      status: "todo,in_progress,blocked,in_review",
     });
 
     res.json(
@@ -1310,6 +1329,14 @@ export function agentRoutes(db: Db) {
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
+    // Warn if the company has no project workspace with a configured cwd.
+    const hireHasConfiguredWorkspace = await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(and(eq(projectWorkspaces.companyId, companyId), isNotNull(projectWorkspaces.cwd)))
+      .limit(1)
+      .then((rows) => rows.length > 0);
+
     let approval: Awaited<ReturnType<typeof approvalsSvc.getById>> | null = null;
     const actor = getActorInfo(req);
 
@@ -1414,7 +1441,18 @@ export function agentRoutes(db: Db) {
       });
     }
 
-    res.status(201).json({ agent, approval });
+    res.status(201).json({
+      agent,
+      approval,
+      ...(hireHasConfiguredWorkspace
+        ? {}
+        : {
+            _warning:
+              "No project workspace with a local path (cwd) is configured for this company. " +
+              "This agent will run in an empty fallback workspace and cannot access any project files. " +
+              "Configure a project workspace via POST /companies/{companyId}/projects/{projectId}/workspaces with a valid cwd.",
+          }),
+    });
   });
 
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
@@ -1459,6 +1497,16 @@ export function agentRoutes(db: Db) {
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(createdAgent);
 
+    // Warn if the company has no project workspace with a configured cwd — the agent
+    // will fall back to an empty workspace directory on every heartbeat, which means
+    // it cannot read or write any project files.
+    const hasConfiguredWorkspace = await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(and(eq(projectWorkspaces.companyId, companyId), isNotNull(projectWorkspaces.cwd)))
+      .limit(1)
+      .then((rows) => rows.length > 0);
+
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId,
@@ -1499,7 +1547,17 @@ export function agentRoutes(db: Db) {
       );
     }
 
-    res.status(201).json(agent);
+    res.status(201).json({
+      ...agent,
+      ...(hasConfiguredWorkspace
+        ? {}
+        : {
+            _warning:
+              "No project workspace with a local path (cwd) is configured for this company. " +
+              "This agent will run in an empty fallback workspace and cannot access any project files. " +
+              "Configure a project workspace via POST /companies/{companyId}/projects/{projectId}/workspaces with a valid cwd.",
+          }),
+    });
   });
 
   router.patch("/agents/:id/permissions", validate(updateAgentPermissionsSchema), async (req, res) => {
@@ -1781,6 +1839,22 @@ export function agentRoutes(db: Db) {
 
     const actor = getActorInfo(req);
     const result = await instructions.deleteFile(existing, relativePath);
+    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
+      existing.companyId,
+      result.adapterConfig,
+      { strictMode: strictSecretsMode },
+    );
+    await svc.update(
+      id,
+      { adapterConfig: normalizedAdapterConfig },
+      {
+        recordRevision: {
+          createdByAgentId: actor.agentId,
+          createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+          source: "instructions_file_deleted",
+        },
+      },
+    );
     await logActivity(db, {
       companyId: existing.companyId,
       actorType: actor.actorType,
@@ -2057,8 +2131,12 @@ export function agentRoutes(db: Db) {
     }
     assertCompanyAccess(req, agent.companyId);
 
-    if (req.actor.type === "agent" && req.actor.agentId !== id) {
-      res.status(403).json({ error: "Agent can only invoke itself" });
+    // Agents may wake up other agents within the same company.
+    // Cross-company isolation is already enforced by assertCompanyAccess above.
+    // We only block an agent from waking up an agent in a different company,
+    // which cannot happen here because assertCompanyAccess would have thrown first.
+    if (req.actor.type === "agent" && req.actor.companyId !== agent.companyId) {
+      res.status(403).json({ error: "Agent can only invoke agents within the same company" });
       return;
     }
 
@@ -2107,8 +2185,10 @@ export function agentRoutes(db: Db) {
     }
     assertCompanyAccess(req, agent.companyId);
 
-    if (req.actor.type === "agent" && req.actor.agentId !== id) {
-      res.status(403).json({ error: "Agent can only invoke itself" });
+    // Agents may invoke other agents within the same company.
+    // Cross-company isolation is enforced by assertCompanyAccess above.
+    if (req.actor.type === "agent" && req.actor.companyId !== agent.companyId) {
+      res.status(403).json({ error: "Agent can only invoke agents within the same company" });
       return;
     }
 

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import {
   addIssueCommentSchema,
+  updateIssueCommentSchema,
   createIssueAttachmentMetadataSchema,
   createIssueWorkProductSchema,
   createIssueLabelSchema,
@@ -68,11 +69,11 @@ export function issueRoutes(
 ) {
   const router = Router();
   const svc = issueService(db);
+  const agentsSvc = agentService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const feedback = feedbackService(db);
   const instanceSettings = instanceSettingsService(db);
-  const agentsSvc = agentService(db);
   const projectsSvc = projectService(db);
   const goalsSvc = goalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
@@ -91,6 +92,19 @@ export function issueRoutes(
       ...attachment,
       contentPath: `/api/attachments/${attachment.id}/content`,
     };
+  }
+
+  async function resolveAllowedScopes(req: Request) {
+    if (req.actor.type === "board") {
+      return ["admin"];
+    }
+    if (req.actor.type === "agent") {
+      const agentId = req.actor.agentId;
+      if (!agentId) return [];
+      const agent = await agentsSvc.getById(agentId);
+      return agent?.scopes ?? [];
+    }
+    return [];
   }
 
   function parseBooleanQuery(value: unknown) {
@@ -422,11 +436,12 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const [{ project, goal }, ancestors, mentionedProjectIds, documentPayload] = await Promise.all([
       resolveIssueProjectAndGoal(issue),
       svc.getAncestors(issue.id),
       svc.findMentionedProjectIds(issue.id),
-      documentsSvc.getIssueDocumentPayload(issue),
+      documentsSvc.getIssueDocumentPayload(issue, allowedScopes),
     ]);
     const mentionedProjects = mentionedProjectIds.length > 0
       ? await projectsSvc.listByIds(issue.companyId, mentionedProjectIds)
@@ -536,7 +551,8 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
-    const docs = await documentsSvc.listIssueDocuments(issue.id);
+    const allowedScopes = await resolveAllowedScopes(req);
+    const docs = await documentsSvc.listIssueDocuments(issue.id, allowedScopes);
     res.json(docs);
   });
 
@@ -548,12 +564,13 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
       return;
     }
-    const doc = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data);
+    const doc = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
     if (!doc) {
       res.status(404).json({ error: "Document not found" });
       return;
@@ -569,19 +586,36 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
       return;
     }
 
+    if (req.body.scope && !allowedScopes.includes(req.body.scope) && !allowedScopes.includes("admin")) {
+      res.status(403).json({ error: `Cannot set scope to ${req.body.scope} (not in allowed scopes: ${allowedScopes.join(", ")})` });
+      return;
+    }
+
+    const existing = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
+    if (!existing) {
+      const existsAtAll = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, ["*"]);
+      if (existsAtAll) {
+        res.status(403).json({ error: "Document access denied (out of scope)" });
+        return;
+      }
+    }
+
     const actor = getActorInfo(req);
     const result = await documentsSvc.upsertIssueDocument({
       issueId: issue.id,
       key: keyParsed.data,
-      title: req.body.title ?? null,
+      title: req.body.title,
+      scope: req.body.scope,
       format: req.body.format,
       body: req.body.body,
+
       changeSummary: req.body.changeSummary ?? null,
       baseRevisionId: req.body.baseRevisionId ?? null,
       createdByAgentId: actor.agentId ?? null,
@@ -619,12 +653,24 @@ export function issueRoutes(
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    const allowedScopes = await resolveAllowedScopes(req);
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
       return;
     }
+    const existing = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
+    if (!existing) {
+      const existsAtAll = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, ["*"]);
+      if (existsAtAll) {
+        res.status(403).json({ error: "Document access denied (out of scope)" });
+        return;
+      }
+      res.status(404).json({ error: "Document not found" });
+      return;
+    }
     const revisions = await documentsSvc.listIssueDocumentRevisions(issue.id, keyParsed.data);
+
     res.json(revisions);
   });
 
@@ -694,6 +740,17 @@ export function issueRoutes(
     const keyParsed = issueDocumentKeySchema.safeParse(String(req.params.key ?? "").trim().toLowerCase());
     if (!keyParsed.success) {
       res.status(400).json({ error: "Invalid document key", details: keyParsed.error.issues });
+      return;
+    }
+    const allowedScopes = await resolveAllowedScopes(req);
+    const existing = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, allowedScopes);
+    if (!existing) {
+      const existsAtAll = await documentsSvc.getIssueDocumentByKey(issue.id, keyParsed.data, ["*"]);
+      if (existsAtAll) {
+        res.status(403).json({ error: "Document access denied (out of scope)" });
+        return;
+      }
+      res.status(404).json({ error: "Document not found" });
       return;
     }
     const removed = await documentsSvc.deleteIssueDocument(issue.id, keyParsed.data);
@@ -1313,6 +1370,25 @@ export function issueRoutes(
         }
       }
 
+      // Wake assignees of issues that were blocked on this one, now that it's done.
+      if (issue.status === "done" && existing.status !== "done") {
+        try {
+          const dependents = await svc.findDependentsToWake(issue.id, issue.companyId);
+          for (const dep of dependents) {
+            if (!dep.assigneeAgentId || wakeups.has(dep.assigneeAgentId)) continue;
+            wakeups.set(dep.assigneeAgentId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "dependency_resolved",
+              payload: { issueId: dep.id, resolvedDependencyId: issue.id },
+              contextSnapshot: { issueId: dep.id, source: "dependency.resolved" },
+            });
+          }
+        } catch (err) {
+          logger.warn({ err, issueId: issue.id }, "failed to wake dependents on issue done");
+        }
+      }
+
       for (const [agentId, wakeup] of wakeups.entries()) {
         heartbeat
           .wakeup(agentId, wakeup)
@@ -1386,6 +1462,17 @@ export function issueRoutes(
 
     if (req.actor.type === "agent" && req.actor.agentId !== req.body.agentId) {
       res.status(403).json({ error: "Agent can only checkout as itself" });
+      return;
+    }
+
+    // Enforce max concurrent in-progress issues per agent.
+    const agent = await agentsSvc.getById(req.body.agentId);
+    const maxConcurrentIssues = (agent?.runtimeConfig as Record<string, unknown> | undefined)?.maxConcurrentIssues as number | undefined ?? 3;
+    const activeCount = await svc.countActiveIssuesForAgent(req.body.agentId, issue.companyId);
+    if (activeCount >= maxConcurrentIssues) {
+      res.status(409).json({
+        error: `Agent already has ${activeCount} active issue(s) (max: ${maxConcurrentIssues})`,
+      });
       return;
     }
 
@@ -1518,6 +1605,97 @@ export function issueRoutes(
     res.json(comment);
   });
 
+  router.patch("/issues/:id/comments/:commentId", validate(updateIssueCommentSchema), async (req, res) => {
+    const id = req.params.id as string;
+    const commentId = req.params.commentId as string;
+    const issue = await svc.getById(id);
+    if (!issue) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    assertCompanyAccess(req, issue.companyId);
+
+    const comment = await svc.getComment(commentId);
+    if (!comment || comment.issueId !== id) {
+      res.status(404).json({ error: "Comment not found" });
+      return;
+    }
+
+    // Authorization: only the comment author can edit
+    const actor = getActorInfo(req);
+    const isAuthor =
+      (actor.actorType === "agent" && comment.authorAgentId === actor.actorId) ||
+      (actor.actorType === "user" && comment.authorUserId === actor.actorId);
+    if (!isAuthor) {
+      res.status(403).json({ error: "Only the comment author can edit a comment" });
+      return;
+    }
+
+    // Guard: if the issue is assigned to a different agent, block edits that
+    // could change @-mentions (effectively reassigning work mid-flight).
+    if (actor.actorType === "agent" && issue.assigneeAgentId && issue.assigneeAgentId !== actor.agentId) {
+      res.status(403).json({ error: "Cannot edit comments on issues assigned to another agent" });
+      return;
+    }
+
+    const oldBody = comment.body;
+    const updated = await svc.updateComment(commentId, req.body.body);
+
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.comment_updated",
+      entityType: "issue",
+      entityId: issue.id,
+      details: {
+        commentId: updated.id,
+        bodySnippet: updated.body.slice(0, 120),
+        identifier: issue.identifier,
+        issueTitle: issue.title,
+      },
+    });
+
+    // Detect new @-mentions added by the edit and wake those agents
+    void (async () => {
+      try {
+        const oldMentions = await svc.findMentionedAgents(issue.companyId, oldBody);
+        const newMentions = await svc.findMentionedAgents(issue.companyId, updated.body);
+        const addedMentions = newMentions.filter((m) => !oldMentions.includes(m));
+
+        for (const mentionedId of addedMentions) {
+          if (actor.actorType === "agent" && actor.actorId === mentionedId) continue;
+          heartbeat
+            .wakeup(mentionedId, {
+              source: "automation",
+              triggerDetail: "system",
+              reason: "issue_comment_mentioned",
+              payload: { issueId: id, commentId: updated.id },
+              requestedByActorType: actor.actorType,
+              requestedByActorId: actor.actorId,
+              contextSnapshot: {
+                issueId: id,
+                taskId: id,
+                commentId: updated.id,
+                wakeCommentId: updated.id,
+                wakeReason: "issue_comment_mentioned",
+                source: "comment.mention.edit",
+              },
+            })
+            .catch((err) =>
+              logger.warn({ err, issueId: id, agentId: mentionedId }, "failed to wake agent on edited comment mention"),
+            );
+        }
+      } catch (err) {
+        logger.warn({ err, issueId: id }, "failed to resolve @-mentions on comment edit");
+      }
+    })();
+
+    res.json(updated);
+  });
+
   router.get("/issues/:id/feedback-votes", async (req, res) => {
     const id = req.params.id as string;
     const issue = await svc.getById(id);
@@ -1612,12 +1790,48 @@ export function issueRoutes(
     const reopenRequested = req.body.reopen === true;
     const interruptRequested = req.body.interrupt === true;
     const isClosed = issue.status === "done" || issue.status === "cancelled";
+    // A board user commenting on a blocked issue means they've provided their input → unblock it
+    const isBlockedByAgent =
+      issue.status === "blocked" &&
+      req.actor.type === "board" &&
+      !!issue.assigneeAgentId;
+    // A board user commenting on an in_review issue means they have feedback → send back to agent
+    const isInReviewByAgent =
+      issue.status === "in_review" &&
+      req.actor.type === "board" &&
+      !!issue.assigneeAgentId;
     let reopened = false;
     let reopenFromStatus: string | null = null;
     let interruptedRunId: string | null = null;
     let currentIssue = issue;
 
-    if (reopenRequested && isClosed) {
+    if (reopenRequested && (isBlockedByAgent || isInReviewByAgent)) {
+      const reopenedIssue = await svc.update(id, { status: "in_progress" });
+      if (!reopenedIssue) {
+        res.status(404).json({ error: "Issue not found" });
+        return;
+      }
+      reopened = true;
+      reopenFromStatus = issue.status;
+      currentIssue = reopenedIssue;
+
+      await logActivity(db, {
+        companyId: currentIssue.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "issue.updated",
+        entityType: "issue",
+        entityId: currentIssue.id,
+        details: {
+          status: "in_progress",
+          reopened: true,
+          reopenedFrom: reopenFromStatus,
+          source: "comment",
+        },
+      });
+    } else if (reopenRequested && isClosed) {
       const reopenedIssue = await svc.update(id, { status: "todo" });
       if (!reopenedIssue) {
         res.status(404).json({ error: "Issue not found" });

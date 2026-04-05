@@ -30,6 +30,7 @@ const CONFIG_REVISION_FIELDS = [
   "role",
   "title",
   "reportsTo",
+  "scopes",
   "capabilities",
   "adapterType",
   "adapterConfig",
@@ -90,6 +91,7 @@ function buildConfigSnapshot(
     role: row.role,
     title: row.title,
     reportsTo: row.reportsTo,
+    scopes: Array.isArray(row.scopes) ? (row.scopes as string[]) : [],
     capabilities: row.capabilities,
     adapterType: row.adapterType,
     adapterConfig,
@@ -139,6 +141,7 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
     title: typeof snapshot.title === "string" || snapshot.title === null ? snapshot.title : null,
     reportsTo:
       typeof snapshot.reportsTo === "string" || snapshot.reportsTo === null ? snapshot.reportsTo : null,
+    scopes: Array.isArray(snapshot.scopes) ? (snapshot.scopes as string[]) : [],
     capabilities:
       typeof snapshot.capabilities === "string" || snapshot.capabilities === null
         ? snapshot.capabilities
@@ -202,6 +205,7 @@ export function agentService(db: Db) {
   function normalizeAgentRow(row: typeof agents.$inferSelect) {
     return withUrlKey({
       ...row,
+      scopes: row.scopes ?? [],
       permissions: normalizeAgentPermissions(row.permissions, row.role),
     });
   }

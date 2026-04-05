@@ -10,9 +10,11 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  companies,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  issuePlans,
   projects,
   projectWorkspaces,
 } from "@paperclipai/db";
@@ -29,6 +31,11 @@ import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../telemetry.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
+import { companyLessonService } from "./company-lessons.js";
+import { retrospectiveService } from "./retrospective.js";
+import { learningLoopService } from "./learning-loop.js";
+import { notificationDispatcherService } from "./notification-dispatcher.js";
+import { agentInstructionsService } from "./agent-instructions.js";
 import { secretService } from "./secrets.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
@@ -44,6 +51,7 @@ import {
   sanitizeRuntimeServiceBaseEnv,
 } from "./workspace-runtime.js";
 import { issueService } from "./issues.js";
+import { planModeService } from "./plan-mode.js";
 import { executionWorkspaceService, mergeExecutionWorkspaceConfig } from "./execution-workspaces.js";
 import { workspaceOperationService } from "./workspace-operations.js";
 import {
@@ -79,6 +87,8 @@ const SESSIONED_LOCAL_ADAPTERS = new Set([
   "opencode_local",
   "pi_local",
 ]);
+const warnedJwtAgents = new Set<string>();
+const infraFailureCounts = new Map<string, number>();
 
 export function applyPersistedExecutionWorkspaceConfig(input: {
   config: Record<string, unknown>;
@@ -314,6 +324,8 @@ type SessionCompactionDecision = {
 interface ParsedIssueAssigneeAdapterOverrides {
   adapterConfig: Record<string, unknown> | null;
   useProjectWorkspace: boolean | null;
+  systemPromptSuffix: string | null;
+  reviewMode: boolean | null;
 }
 
 export type ResolvedWorkspaceForRun = {
@@ -332,8 +344,12 @@ export type ResolvedWorkspaceForRun = {
   warnings: string[];
 };
 
-type ProjectWorkspaceCandidate = {
-  id: string;
+type ProjectWorkspaceCandidate = { id: string };
+
+type ResumeSessionRow = {
+  sessionParamsJson: Record<string, unknown> | null;
+  sessionDisplayId: string | null;
+  lastRunId: string | null;
 };
 
 export function prioritizeProjectWorkspaceCandidatesForRun<T extends ProjectWorkspaceCandidate>(
@@ -346,6 +362,37 @@ export function prioritizeProjectWorkspaceCandidatesForRun<T extends ProjectWork
   return [rows[preferredIndex]!, ...rows.slice(0, preferredIndex), ...rows.slice(preferredIndex + 1)];
 }
 
+export function formatRuntimeWorkspaceWarningLog(warning: string) {
+  return { stream: "stdout" as const, chunk: `[paperclip] ${warning}\n` };
+}
+
+export function buildExplicitResumeSessionOverride(input: {
+  resumeFromRunId: string;
+  resumeRunSessionIdBefore: string | null;
+  resumeRunSessionIdAfter: string | null;
+  taskSession: ResumeSessionRow | null;
+  sessionCodec: AdapterSessionCodec;
+}) {
+  const desiredDisplayId = truncateDisplayId(input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore);
+  const taskSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.taskSession?.sessionParamsJson ?? null),
+  );
+  const taskSessionDisplayId = truncateDisplayId(
+    input.taskSession?.sessionDisplayId ??
+      (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(taskSessionParams) : null) ??
+      readNonEmptyString(taskSessionParams?.sessionId),
+  );
+  const canReuseTaskSessionParams =
+    input.taskSession != null &&
+    (input.taskSession.lastRunId === input.resumeFromRunId ||
+      (!!desiredDisplayId && taskSessionDisplayId === desiredDisplayId));
+  const sessionParams = canReuseTaskSessionParams
+    ? taskSessionParams
+    : desiredDisplayId ? { sessionId: desiredDisplayId } : null;
+  const sessionDisplayId = desiredDisplayId ?? (canReuseTaskSessionParams ? taskSessionDisplayId : null);
+  if (!sessionDisplayId && !sessionParams) return null;
+  return { sessionDisplayId, sessionParams };
+}
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
@@ -408,51 +455,6 @@ async function resolveLedgerScopeForRun(
   return {
     issueId: issue?.id ?? null,
     projectId: issue?.projectId ?? contextProjectId,
-  };
-}
-
-type ResumeSessionRow = {
-  sessionParamsJson: Record<string, unknown> | null;
-  sessionDisplayId: string | null;
-  lastRunId: string | null;
-};
-
-export function buildExplicitResumeSessionOverride(input: {
-  resumeFromRunId: string;
-  resumeRunSessionIdBefore: string | null;
-  resumeRunSessionIdAfter: string | null;
-  taskSession: ResumeSessionRow | null;
-  sessionCodec: AdapterSessionCodec;
-}) {
-  const desiredDisplayId = truncateDisplayId(
-    input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore,
-  );
-  const taskSessionParams = normalizeSessionParams(
-    input.sessionCodec.deserialize(input.taskSession?.sessionParamsJson ?? null),
-  );
-  const taskSessionDisplayId = truncateDisplayId(
-    input.taskSession?.sessionDisplayId ??
-      (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(taskSessionParams) : null) ??
-      readNonEmptyString(taskSessionParams?.sessionId),
-  );
-  const canReuseTaskSessionParams =
-    input.taskSession != null &&
-    (
-      input.taskSession.lastRunId === input.resumeFromRunId ||
-      (!!desiredDisplayId && taskSessionDisplayId === desiredDisplayId)
-    );
-  const sessionParams =
-    canReuseTaskSessionParams
-      ? taskSessionParams
-      : desiredDisplayId
-        ? { sessionId: desiredDisplayId }
-        : null;
-  const sessionDisplayId = desiredDisplayId ?? (canReuseTaskSessionParams ? taskSessionDisplayId : null);
-
-  if (!sessionDisplayId && !sessionParams) return null;
-  return {
-    sessionDisplayId,
-    sessionParams,
   };
 }
 
@@ -519,8 +521,32 @@ function formatCount(value: number | null | undefined) {
   return value.toLocaleString("en-US");
 }
 
+// Adapters that manage their own compaction natively — Paperclip should not impose rotation limits by default
+const NATIVE_COMPACTION_ADAPTERS = new Set(["claude_local", "codex_local"]);
+
 export function parseSessionCompactionPolicy(agent: typeof agents.$inferSelect): SessionCompactionPolicy {
-  return resolveSessionCompactionPolicy(agent.adapterType, agent.runtimeConfig).policy;
+  const runtimeConfig = parseObject(agent.runtimeConfig);
+  const heartbeat = parseObject(runtimeConfig.heartbeat);
+  const compaction = parseObject(
+    heartbeat.sessionCompaction ?? heartbeat.sessionRotation ?? runtimeConfig.sessionCompaction,
+  );
+  const supportsSessions = SESSIONED_LOCAL_ADAPTERS.has(agent.adapterType);
+  const nativeCompaction = NATIVE_COMPACTION_ADAPTERS.has(agent.adapterType);
+  const enabled = compaction.enabled === undefined
+    ? supportsSessions
+    : asBoolean(compaction.enabled, supportsSessions);
+
+  // For adapters with native compaction, default limits to 0 (disabled) unless explicitly set
+  const defaultMaxRuns = nativeCompaction ? 0 : 200;
+  const defaultMaxTokens = nativeCompaction ? 0 : 2_000_000;
+  const defaultMaxAge = nativeCompaction ? 0 : 72;
+
+  return {
+    enabled,
+    maxSessionRuns: Math.max(0, Math.floor(asNumber(compaction.maxSessionRuns, defaultMaxRuns))),
+    maxRawInputTokens: Math.max(0, Math.floor(asNumber(compaction.maxRawInputTokens, defaultMaxTokens))),
+    maxSessionAgeHours: Math.max(0, Math.floor(asNumber(compaction.maxSessionAgeHours, defaultMaxAge))),
+  };
 }
 
 export function resolveRuntimeSessionParamsForWorkspace(input: {
@@ -602,10 +628,16 @@ function parseIssueAssigneeAdapterOverrides(
     typeof parsed.useProjectWorkspace === "boolean"
       ? parsed.useProjectWorkspace
       : null;
-  if (!adapterConfig && useProjectWorkspace === null) return null;
+  const systemPromptSuffix =
+    typeof parsed.systemPromptSuffix === "string" ? parsed.systemPromptSuffix : null;
+  const reviewMode = typeof parsed.reviewMode === "boolean" ? parsed.reviewMode : null;
+
+  if (!adapterConfig && useProjectWorkspace === null && !systemPromptSuffix && reviewMode === null) return null;
   return {
     adapterConfig,
     useProjectWorkspace,
+    systemPromptSuffix,
+    reviewMode,
   };
 }
 
@@ -662,13 +694,6 @@ export function shouldResetTaskSessionForWake(
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (wakeReason === "issue_assigned") return true;
   return false;
-}
-
-export function formatRuntimeWorkspaceWarningLog(warning: string) {
-  return {
-    stream: "stdout" as const,
-    chunk: `[paperclip] ${warning}\n`,
-  };
 }
 
 function describeSessionResetReason(
@@ -1506,6 +1531,31 @@ export function heartbeatService(db: Db) {
           finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
         },
       });
+
+      // Dispatch notifications for heartbeat status changes
+      const triggerType = updated.status === "succeeded"
+        ? "heartbeat.completed"
+        : updated.status === "failed"
+          ? "heartbeat.failed"
+          : null;
+
+      if (triggerType) {
+        void notificationDispatcherService(db)
+          .dispatch(updated.companyId, triggerType, {
+            runId: updated.id,
+            agentId: updated.agentId,
+            status: updated.status,
+            invocationSource: updated.invocationSource,
+            triggerDetail: updated.triggerDetail,
+            error: updated.error,
+            errorCode: updated.errorCode,
+            startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
+            finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
+          })
+          .catch((err) => {
+            logger.warn({ runId: updated.id, err }, "Notification dispatch failed non-critically");
+          });
+      }
     }
 
     return updated;
@@ -1870,6 +1920,20 @@ export function heartbeatService(db: Db) {
     for (const { run, adapterType } of activeRuns) {
       if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
 
+      // For locally-spawned adapters with a recorded pid, check if the process is still alive
+      if (run.processPid != null) {
+        const pidAlive = isLocalPidAlive(run.processPid);
+        if (pidAlive) {
+          // Process is still running but we lost the in-memory handle - mark as detached warning
+          await setRunStatus(run.id, "running", {
+            error: `Lost in-memory process handle, but child pid ${run.processPid} is still alive`,
+            errorCode: "process_detached",
+          });
+          continue;
+        }
+        // PID is dead - fall through to reaping
+      }
+
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
         const refTime = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
@@ -1917,10 +1981,12 @@ export function heartbeatService(db: Db) {
       if (!finalizedRun) continue;
 
       let retriedRun: typeof heartbeatRuns.$inferSelect | null = null;
+      let queuedRetry = false;
       if (shouldRetry) {
         const agent = await getAgent(run.agentId);
         if (agent) {
           retriedRun = await enqueueProcessLossRetry(finalizedRun, agent, now);
+          if (retriedRun) queuedRetry = true;
         }
       } else {
         await releaseIssueExecutionAndPromote(finalizedRun);
@@ -1940,7 +2006,9 @@ export function heartbeatService(db: Db) {
       });
 
       await finalizeAgentStatus(run.agentId, "failed");
-      await startNextQueuedRunForAgent(run.agentId);
+      if (!queuedRetry) {
+        await startNextQueuedRunForAgent(run.agentId);
+      }
       runningProcesses.delete(run.id);
       reaped.push(run.id);
     }
@@ -1949,6 +2017,15 @@ export function heartbeatService(db: Db) {
       logger.warn({ reapedCount: reaped.length, runIds: reaped }, "reaped orphaned heartbeat runs");
     }
     return { reaped: reaped.length, runIds: reaped };
+  }
+
+  function isLocalPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function resumeQueuedRuns() {
@@ -1999,7 +2076,7 @@ export function heartbeatService(db: Db) {
       .where(eq(agentRuntimeState.agentId, agent.id));
 
     if (additionalCostCents > 0 || hasTokenUsage) {
-      const costs = costService(db, budgetHooks);
+      const costs = costService(db);
       await costs.createEvent(agent.companyId, {
         heartbeatRunId: run.id,
         agentId: agent.id,
@@ -2110,6 +2187,35 @@ export function heartbeatService(db: Db) {
           .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
           .then((rows) => rows[0] ?? null)
       : null;
+
+    // Plan Mode gate: if issue requires a plan (proofRequirementTier >= 2), block without approved plan
+    if (issueId && issueContext) {
+      try {
+        const [fullIssue] = await db
+          .select({ proofRequirementTier: issues.proofRequirementTier })
+          .from(issues)
+          .where(eq(issues.id, issueId));
+
+        if (fullIssue?.proofRequirementTier && fullIssue.proofRequirementTier >= 2) {
+          const activePlan = await planModeService(db).getActivePlanForIssue(issueId);
+          if (!activePlan) { // getActivePlanForIssue already filters for status="approved"
+            // Block execution — set run to failed with a clear reason
+            await setRunStatus(run.id, "failed", {
+              error: "plan_required: An approved plan is required before execution for this issue. Create and get a plan approved via /companies/{companyId}/plans.",
+            });
+            await setWakeupStatus(run.wakeupRequestId, "failed", {
+              finishedAt: new Date(),
+              error: "plan_required",
+            });
+            logger.info({ issueId, agentId: agent.id }, "Plan gate blocked execution: no approved plan");
+            return;
+          }
+        }
+      } catch (planGateErr) {
+        logger.warn({ issueId, err: planGateErr }, "Plan gate check failed, continuing execution");
+      }
+    }
+
     const issueAssigneeOverrides =
       issueContext && issueContext.assigneeAgentId === agent.id
         ? parseIssueAssigneeAdapterOverrides(
@@ -2211,12 +2317,36 @@ export function heartbeatService(db: Db) {
     const { config: resolvedConfig, secretKeys } = await secretsSvc.resolveAdapterConfigForRuntime(
       agent.companyId,
       executionRunConfig,
+      agent.scopes ?? [],
     );
     const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
+    
+    // ⚡ Slimmer: Progressive Disclosure implementation
+    const contextSnapshot = (run.contextSnapshot as Record<string, unknown>) ?? {};
+    const activeSkillKeys = Array.isArray(contextSnapshot.paperclipActiveSkills) 
+      ? contextSnapshot.paperclipActiveSkills 
+      : [];
+    
+    const slimmedSkillEntries = runtimeSkillEntries.map(entry => {
+      const isActive = activeSkillKeys.includes(entry.key) || entry.required;
+      if (isActive) return entry;
+      
+      // For inactive skills, we strip the source path so the adapter only sees metadata
+      return {
+        ...entry,
+        source: null, 
+        discoveryOnly: true,
+      };
+    });
+
     const runtimeConfig = {
       ...resolvedConfig,
-      paperclipRuntimeSkills: runtimeSkillEntries,
+      paperclipRuntimeSkills: slimmedSkillEntries,
+      paperclipActiveSkills: activeSkillKeys,
     };
+    if (issueAssigneeOverrides?.systemPromptSuffix) {
+      (context as any).paperclipSystemPromptSuffix = issueAssigneeOverrides.systemPromptSuffix;
+    }
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
       companyId: agent.companyId,
       heartbeatRunId: run.id,
@@ -2490,6 +2620,7 @@ export function heartbeatService(db: Db) {
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
     let stderrExcerpt = "";
+    let adapterExecuteStartMs = 0;
     try {
       const startedAt = run.startedAt ?? new Date();
       const runningWithSession = await db
@@ -2649,10 +2780,23 @@ export function heartbeatService(db: Db) {
       };
 
       const adapter = getServerAdapter(agent.adapterType);
+      adapterExecuteStartMs = Date.now();
+      logger.debug(
+        {
+          op: "heartbeat.adapter.execute",
+          runId: run.id,
+          issueId: issueId ?? undefined,
+          agentId: agent.id,
+          companyId: agent.companyId,
+          adapterType: agent.adapterType,
+        },
+        "Adapter execute start",
+      );
       const authToken = adapter.supportsLocalAgentJwt
         ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
         : null;
-      if (adapter.supportsLocalAgentJwt && !authToken) {
+      if (adapter.supportsLocalAgentJwt && !authToken && !warnedJwtAgents.has(agent.id)) {
+        warnedJwtAgents.add(agent.id);
         logger.warn(
           {
             companyId: agent.companyId,
@@ -2663,6 +2807,34 @@ export function heartbeatService(db: Db) {
           "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
         );
       }
+      // Hierarchical instructions from DB
+      const company = await db
+        .select({ systemPrompt: companies.systemPrompt })
+        .from(companies)
+        .where(eq(companies.id, agent.companyId))
+        .then((rows) => rows[0] ?? null);
+
+      const hierarchicalInstructions = [
+        company?.systemPrompt,
+        agent.rolePrompt,
+      ]
+        .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+        .join("\n\n---\n\n");
+
+      if (hierarchicalInstructions.length > 0) {
+        context.paperclipHierarchicalInstructions = hierarchicalInstructions;
+      }
+
+      try {
+        const lessonQuery = issueContext?.title ?? agent.name ?? "";
+        const lessons = await companyLessonService(db).findRelevant(agent.companyId, lessonQuery);
+        if (lessons.length > 0) {
+          context.paperclipLessons = lessons.map((l) => l.rule);
+        }
+      } catch (err) {
+        logger.warn({ agentId: agent.id, err }, "failed to fetch relevant lessons");
+      }
+
       const adapterResult = await adapter.execute({
         runId: run.id,
         agent,
@@ -2676,6 +2848,21 @@ export function heartbeatService(db: Db) {
         },
         authToken: authToken ?? undefined,
       });
+      logger.debug(
+        {
+          op: "heartbeat.adapter.execute",
+          runId: run.id,
+          issueId: issueId ?? undefined,
+          agentId: agent.id,
+          companyId: agent.companyId,
+          adapterType: agent.adapterType,
+          durationMs: Date.now() - adapterExecuteStartMs,
+          exitCode: adapterResult.exitCode,
+          timedOut: Boolean(adapterResult.timedOut),
+          hasErrorMessage: Boolean(adapterResult.errorMessage),
+        },
+        "Adapter execute finished",
+      );
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
             db,
@@ -2816,10 +3003,28 @@ export function heartbeatService(db: Db) {
         sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
         stdoutExcerpt,
         stderrExcerpt,
-        logBytes: logSummary?.bytes,
-        logSha256: logSummary?.sha256,
+        logBytes: logSummary?.bytes ?? null,
+        logSha256: logSummary?.sha256 ?? null,
         logCompressed: logSummary?.compressed ?? false,
-      });
+        });
+
+        if (issueId && status === "failed") {
+          void retrospectiveService(db)
+            .analyzeIssueFailures(issueId)
+            .catch((err) => {
+              logger.warn({ issueId, err }, "failed to trigger retrospective analysis");
+            });
+        }
+
+        // After a successful run, trigger learning loop
+        if (status === "succeeded") {
+          void learningLoopService(db)
+            .extractLessonsFromRun(run.id, run.companyId)
+            .catch((err) => {
+              logger.warn({ runId: run.id, err }, "Learning loop failed non-critically");
+            });
+        }
+
 
       await setWakeupStatus(run.wakeupRequestId, outcome === "succeeded" ? "completed" : status, {
         finishedAt: new Date(),
@@ -2871,6 +3076,21 @@ export function heartbeatService(db: Db) {
         err instanceof Error ? err.message : "Unknown adapter failure",
         await getCurrentUserRedactionOptions(),
       );
+      if (adapterExecuteStartMs > 0) {
+        logger.debug(
+          {
+            op: "heartbeat.adapter.execute",
+            runId,
+            issueId: issueId ?? undefined,
+            agentId: agent.id,
+            companyId: agent.companyId,
+            adapterType: agent.adapterType,
+            durationMs: Date.now() - adapterExecuteStartMs,
+            err,
+          },
+          "Adapter execute failed before normal completion",
+        );
+      }
       logger.error({ err, runId }, "heartbeat execution failed");
 
       let logSummary: { bytes: number; sha256?: string; compressed: boolean } | null = null;
@@ -2882,9 +3102,39 @@ export function heartbeatService(db: Db) {
         }
       }
 
+      const resolvedErrorCode = (err as any).code === "instructions_file_not_found"
+        ? "instructions_file_not_found"
+        : "adapter_failed";
+
+      if (resolvedErrorCode === "instructions_file_not_found") {
+        try {
+          const instructionsSvc = agentInstructionsService();
+          await instructionsSvc.ensureManagedBundle(agent);
+          logger.warn({ agentId: agent.id }, "instructions bundle was missing; auto-repaired for next run");
+        } catch (repairErr) {
+          logger.error({ agentId: agent.id, repairErr }, "failed to auto-repair missing instructions bundle");
+        }
+        const newCount = (infraFailureCounts.get(agent.id) ?? 0) + 1;
+        infraFailureCounts.set(agent.id, newCount);
+        try {
+          await retrospectiveService(db).analyzeInfrastructureFailure({
+            companyId: agent.companyId,
+            agentId: agent.id,
+            agentName: agent.name,
+            errorCode: resolvedErrorCode,
+            errorMessage: message,
+            recurrenceCount: newCount,
+          });
+        } catch (alertErr) {
+          logger.warn({ agentId: agent.id, alertErr }, "failed to emit infrastructure alert");
+        }
+      } else {
+        infraFailureCounts.delete(agent.id);
+      }
+
       const failedRun = await setRunStatus(run.id, "failed", {
         error: message,
-        errorCode: "adapter_failed",
+        errorCode: resolvedErrorCode,
         finishedAt: new Date(),
         stdoutExcerpt,
         stderrExcerpt,
@@ -2936,9 +3186,12 @@ export function heartbeatService(db: Db) {
           // The inner catch did not fire, so we must record the failure here.
           const message = outerErr instanceof Error ? outerErr.message : "Unknown setup failure";
           logger.error({ err: outerErr, runId }, "heartbeat execution setup failed");
+          const outerResolvedErrorCode = (outerErr as any).code === "instructions_file_not_found"
+            ? "instructions_file_not_found"
+            : "adapter_failed";
           await setRunStatus(runId, "failed", {
             error: message,
-            errorCode: "adapter_failed",
+            errorCode: outerResolvedErrorCode,
             finishedAt: new Date(),
           }).catch(() => undefined);
           await setWakeupStatus(run.wakeupRequestId, "failed", {
@@ -2977,6 +3230,7 @@ export function heartbeatService(db: Db) {
         .select({
           id: issues.id,
           companyId: issues.companyId,
+          status: issues.status,
         })
         .from(issues)
         .where(and(eq(issues.companyId, run.companyId), eq(issues.executionRunId, run.id)))
@@ -2984,14 +3238,33 @@ export function heartbeatService(db: Db) {
 
       if (!issue) return;
 
+      // If the run completed without the agent explicitly closing the issue,
+      // reset it from in_progress back to todo so it can be picked up again.
+      // This applies to succeeded AND failed/cancelled runs because
+      // releaseIssueExecutionAndPromote is only called on non-retry paths:
+      //   - succeeded: agent is done, unclosed issue is a leaked checkout.
+      //   - failed/cancelled (no retry): no reconnect will be scheduled, so
+      //     preserving checkoutRunId would leave the issue permanently locked
+      //     with a stale run, causing "run ownership conflict" 403s on every
+      //     subsequent heartbeat until manually cleared.
+      // For failed runs WITH retry, enqueueProcessLossRetry is called instead
+      // and this function is not invoked, so checkout preservation for
+      // process-loss recovery is handled there, not here.
+      const statusPatch: { executionRunId: null; executionAgentNameKey: null; executionLockedAt: null; updatedAt: Date; status?: string; checkoutRunId?: null; startedAt?: null } = {
+        executionRunId: null,
+        executionAgentNameKey: null,
+        executionLockedAt: null,
+        updatedAt: new Date(),
+      };
+      if (issue.status === "in_progress") {
+        statusPatch.status = "todo";
+        statusPatch.checkoutRunId = null;
+        statusPatch.startedAt = null;
+      }
+
       await tx
         .update(issues)
-        .set({
-          executionRunId: null,
-          executionAgentNameKey: null,
-          executionLockedAt: null,
-          updatedAt: new Date(),
-        })
+        .set(statusPatch)
         .where(eq(issues.id, issue.id));
 
       while (true) {

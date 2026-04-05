@@ -1509,7 +1509,7 @@ function normalizePortableConfig(
       key === "instructionsRootPath" ||
       key === "instructionsEntryFile" ||
       key === "promptTemplate" ||
-      key === "bootstrapPromptTemplate" || // deprecated — kept for backward compat
+      key === "bootstrapPromptTemplate" ||
       key === "paperclipSkillSync"
     ) continue;
     if (key === "env") continue;
@@ -3940,7 +3940,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         if (typeof markdownRaw === "string") {
           const importedInstructionsBody = parseFrontmatterMarkdown(markdownRaw).body;
           bundleFiles[entryRelativePath] = importedInstructionsBody;
-          if (entryRelativePath !== "AGENTS.md") {
+          if (entryRelativePath !== "AGENTS.md" && !bundleFiles["AGENTS.md"]) {
             bundleFiles["AGENTS.md"] = importedInstructionsBody;
           }
         }
@@ -3965,7 +3965,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           desiredSkills,
         );
         delete adapterConfigWithSkills.promptTemplate;
-        delete adapterConfigWithSkills.bootstrapPromptTemplate; // deprecated
+        delete adapterConfigWithSkills.bootstrapPromptTemplate;
         delete adapterConfigWithSkills.instructionsFilePath;
         delete adapterConfigWithSkills.instructionsBundleMode;
         delete adapterConfigWithSkills.instructionsRootPath;

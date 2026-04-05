@@ -8,7 +8,7 @@ import type {
   IssueComment,
 } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Check, Copy, Paperclip } from "lucide-react";
+import { ArrowRight, Check, Copy, Paperclip, Pencil, X } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
@@ -29,7 +29,7 @@ interface CommentWithRunMeta extends IssueComment {
   runAgentId?: string | null;
   clientId?: string;
   clientStatus?: "pending" | "queued";
-  queueState?: "queued";
+  queueState?: "queued" | null;
   queueTargetRunId?: string | null;
 }
 
@@ -63,6 +63,9 @@ interface CommentThreadProps {
     options?: { allowSharing?: boolean; reason?: string },
   ) => Promise<void>;
   onAdd: (body: string, reopen?: boolean, reassignment?: CommentReassignment) => Promise<void>;
+  onEdit?: (commentId: string, body: string) => Promise<void>;
+  onInterruptQueued?: (runId: string) => Promise<void>;
+  interruptingQueuedRunId?: string | null;
   issueStatus?: string;
   agentMap?: Map<string, Agent>;
   currentUserId?: string | null;
@@ -76,8 +79,6 @@ interface CommentThreadProps {
   currentAssigneeValue?: string;
   suggestedAssigneeValue?: string;
   mentions?: MentionOption[];
-  onInterruptQueued?: (runId: string) => Promise<void>;
-  interruptingQueuedRunId?: string | null;
 }
 
 const DRAFT_DEBOUNCE_MS = 800;
@@ -232,6 +233,11 @@ function CommentCard({
   voting = false,
   highlightCommentId,
   queued = false,
+  onEdit,
+  onInterruptQueued,
+  interruptingQueuedRunId,
+  editState,
+  onSetEditState,
 }: {
   comment: CommentWithRunMeta;
   agentMap?: Map<string, Agent>;
@@ -247,10 +253,19 @@ function CommentCard({
   voting?: boolean;
   highlightCommentId?: string | null;
   queued?: boolean;
+  onEdit?: (commentId: string, body: string) => Promise<void>;
+  onInterruptQueued?: (runId: string) => Promise<void>;
+  interruptingQueuedRunId?: string | null;
+  editState?: { id: string; body: string; saving: boolean } | null;
+  onSetEditState?: (state: { id: string; body: string; saving: boolean } | null) => void;
 }) {
   const isHighlighted = highlightCommentId === comment.id;
   const isPending = comment.clientStatus === "pending";
   const isQueued = queued || comment.queueState === "queued" || comment.clientStatus === "queued";
+  const isEditing = editState?.id === comment.id;
+  const isUserComment = !comment.authorAgentId;
+  const canInterrupt = isQueued && comment.queueTargetRunId && onInterruptQueued;
+  const isInterrupting = isQueued && comment.queueTargetRunId === interruptingQueuedRunId;
 
   return (
     <div
@@ -265,22 +280,24 @@ function CommentCard({
       } ${isPending ? "opacity-80" : ""}`}
     >
       <div className="flex items-center justify-between mb-1">
-        {comment.authorAgentId ? (
-          <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
-            <Identity
-              name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
-              size="sm"
-            />
-          </Link>
-        ) : (
-          <Identity name="You" size="sm" />
-        )}
-        <span className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
+          {comment.authorAgentId ? (
+            <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
+              <Identity
+                name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
+                size="sm"
+              />
+            </Link>
+          ) : (
+            <Identity name="You" size="sm" />
+          )}
           {isQueued ? (
             <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-100/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-200">
               Queued
             </span>
           ) : null}
+        </div>
+        <span className="flex items-center gap-1.5">
           {companyId && !isPending ? (
             <PluginSlotOutlet
               slotTypes={["commentContextMenuItem"]}
@@ -307,10 +324,71 @@ function CommentCard({
               {formatDateTime(comment.createdAt)}
             </a>
           )}
+          {isUserComment && onEdit && !isEditing && !isQueued && onSetEditState && (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Edit comment"
+              onClick={() => {
+                onSetEditState({ id: comment.id, body: comment.body, saving: false });
+              }}
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          )}
           <CopyMarkdownButton text={comment.body} />
+          {canInterrupt && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Cancel queued action"
+              title="Cancel queued action"
+              disabled={isInterrupting}
+              onClick={() => onInterruptQueued(comment.queueTargetRunId!)}
+            >
+              <X className="h-3.5 w-3.5 text-destructive" />
+            </Button>          )}
         </span>
       </div>
-      <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+      {isEditing ? (
+        <div className="space-y-2 my-2">
+          <textarea
+            className="w-full min-h-[60px] rounded-sm border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+            value={editState?.body ?? ""}
+            onChange={(e) => onSetEditState?.(editState ? { ...editState, body: e.target.value } : null)}
+            disabled={editState?.saving}
+          />
+          <div className="flex items-center gap-2 justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={editState?.saving}
+              onClick={() => onSetEditState?.(null)}
+            >
+              <X className="h-3 w-3 mr-1" />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={editState?.saving || !editState?.body.trim()}
+              onClick={async () => {
+                if (!onEdit || !editState?.body.trim()) return;
+                onSetEditState?.({ ...editState, saving: true });
+                try {
+                  await onEdit(comment.id, editState.body.trim());
+                  onSetEditState?.(null);
+                } finally {
+                  onSetEditState?.(editState ? { ...editState, saving: false } : null);
+                }
+              }}
+            >
+              {editState?.saving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+      )}
       {companyId && !isPending ? (
         <div className="mt-2 space-y-2">
           <PluginSlotOutlet
@@ -371,7 +449,6 @@ function CommentCard({
     </div>
   );
 }
-
 type TimelineItem =
   | { kind: "comment"; id: string; createdAtMs: number; comment: CommentWithRunMeta }
   | { kind: "event"; id: string; createdAtMs: number; event: IssueTimelineEvent }
@@ -452,6 +529,9 @@ const TimelineList = memo(function TimelineList({
   onVote,
   votingTargetId,
   highlightCommentId,
+  onEdit,
+  onInterruptQueued,
+  interruptingQueuedRunId,
 }: {
   timeline: TimelineItem[];
   agentMap?: Map<string, Agent>;
@@ -468,7 +548,11 @@ const TimelineList = memo(function TimelineList({
   ) => Promise<void>;
   votingTargetId?: string | null;
   highlightCommentId?: string | null;
+  onEdit?: (commentId: string, body: string) => Promise<void>;
+  onInterruptQueued?: (runId: string) => Promise<void>;
+  interruptingQueuedRunId?: string | null;
 }) {
+  const [editState, setEditState] = useState<{ id: string; body: string; saving: boolean } | null>(null);
   if (timeline.length === 0) {
     return <p className="text-sm text-muted-foreground">No timeline entries yet.</p>;
   }
@@ -524,6 +608,13 @@ const TimelineList = memo(function TimelineList({
         }
 
         const comment = item.comment;
+        const isHighlighted = highlightCommentId === comment.id;
+        const isUserComment = !comment.authorAgentId;
+        const isEditing = editState?.id === comment.id;
+        const isQueued = comment.queueState === "queued";
+        const canInterrupt = isQueued && comment.queueTargetRunId && onInterruptQueued;
+        const isInterrupting = isQueued && comment.queueTargetRunId === interruptingQueuedRunId;
+
         return (
           <CommentCard
             key={comment.id}
@@ -537,6 +628,11 @@ const TimelineList = memo(function TimelineList({
             onVote={onVote ? (vote, options) => onVote(comment.id, vote, options) : undefined}
             voting={votingTargetId === comment.id}
             highlightCommentId={highlightCommentId}
+            onEdit={onEdit}
+            onInterruptQueued={onInterruptQueued}
+            interruptingQueuedRunId={interruptingQueuedRunId}
+            editState={editState}
+            onSetEditState={setEditState}
           />
         );
       })}
@@ -556,6 +652,10 @@ export function CommentThread({
   projectId,
   onVote,
   onAdd,
+  onEdit,
+  onInterruptQueued,
+  interruptingQueuedRunId,
+  issueStatus,
   agentMap,
   currentUserId,
   imageUploadHandler,
@@ -567,8 +667,6 @@ export function CommentThread({
   currentAssigneeValue = "",
   suggestedAssigneeValue,
   mentions: providedMentions,
-  onInterruptQueued,
-  interruptingQueuedRunId = null,
 }: CommentThreadProps) {
   const [body, setBody] = useState("");
   const [reopen, setReopen] = useState(true);
@@ -585,7 +683,7 @@ export function CommentThread({
   const hasScrolledRef = useRef(false);
 
   const timeline = useMemo<TimelineItem[]>(() => {
-    const commentItems: TimelineItem[] = comments.map((comment) => ({
+    const commentItems: TimelineItem[] = [...comments, ...queuedComments].map((comment) => ({
       kind: "comment",
       id: comment.id,
       createdAtMs: new Date(comment.createdAt).getTime(),
@@ -613,7 +711,7 @@ export function CommentThread({
       } as const;
       return kindOrder[a.kind] - kindOrder[b.kind];
     });
-  }, [comments, timelineEvents, linkedRuns]);
+  }, [comments, queuedComments, timelineEvents, linkedRuns]);
 
   const feedbackVoteByTargetId = useMemo(() => {
     const map = new Map<string, FeedbackVoteValue>();
@@ -665,7 +763,7 @@ export function CommentThread({
   // Scroll to comment when URL hash matches #comment-{id}
   useEffect(() => {
     const hash = location.hash;
-    if (!hash.startsWith("#comment-") || comments.length + queuedComments.length === 0) return;
+    if (!hash.startsWith("#comment-") || comments.length === 0) return;
     const commentId = hash.slice("#comment-".length);
     // Only scroll once per hash
     if (hasScrolledRef.current) return;
@@ -678,7 +776,7 @@ export function CommentThread({
       const timer = setTimeout(() => setHighlightCommentId(null), 3000);
       return () => clearTimeout(timer);
     }
-  }, [location.hash, comments, queuedComments]);
+  }, [location.hash, comments]);
 
   async function handleSubmit() {
     const trimmed = body.trim();
@@ -744,7 +842,7 @@ export function CommentThread({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Timeline ({timeline.length + queuedComments.length})</h3>
+      <h3 className="text-sm font-semibold">Timeline ({timeline.length})</h3>
 
       <TimelineList
         timeline={timeline}
@@ -754,47 +852,16 @@ export function CommentThread({
         projectId={projectId}
         feedbackVoteByTargetId={feedbackVoteByTargetId}
         feedbackDataSharingPreference={feedbackDataSharingPreference}
+        feedbackTermsUrl={feedbackTermsUrl}
         onVote={onVote ? handleFeedbackVote : undefined}
         votingTargetId={votingTargetId}
         highlightCommentId={highlightCommentId}
-        feedbackTermsUrl={feedbackTermsUrl}
+        onEdit={onEdit}
+        onInterruptQueued={onInterruptQueued}
+        interruptingQueuedRunId={interruptingQueuedRunId}
       />
 
       {liveRunSlot}
-
-      {queuedComments.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
-              Queued Comments ({queuedComments.length})
-            </h4>
-            {onInterruptQueued && queuedComments[0]?.queueTargetRunId ? (
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800 dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10"
-                disabled={interruptingQueuedRunId === queuedComments[0].queueTargetRunId}
-                onClick={() => void onInterruptQueued(queuedComments[0]!.queueTargetRunId!)}
-              >
-                {interruptingQueuedRunId === queuedComments[0].queueTargetRunId ? "Interrupting..." : "Interrupt"}
-              </Button>
-            ) : null}
-          </div>
-          <div className="space-y-3">
-            {queuedComments.map((comment) => (
-              <CommentCard
-                key={comment.id}
-                comment={comment}
-                agentMap={agentMap}
-                companyId={companyId}
-                projectId={projectId}
-                highlightCommentId={highlightCommentId}
-                queued
-              />
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="space-y-2">
         <MarkdownEditor
@@ -820,6 +887,7 @@ export function CommentThread({
               <Button
                 variant="ghost"
                 size="icon-sm"
+                aria-label="Attach file"
                 onClick={() => attachInputRef.current?.click()}
                 disabled={attaching}
                 title="Attach image"

@@ -36,12 +36,13 @@
   ],
   "scripts": {
     "check:migrations": "tsx src/check-migration-numbering.ts",
-    "build": "pnpm run check:migrations && tsc && cp -r src/migrations dist/migrations",
+    "build": "pnpm run check:migrations && tsc && mkdir -p dist/migrations && cp -r src/migrations/. dist/migrations/",
     "clean": "rm -rf dist",
     "typecheck": "pnpm run check:migrations && tsc --noEmit",
     "generate": "pnpm run check:migrations && tsc -p tsconfig.json && drizzle-kit generate",
     "migrate": "pnpm run check:migrations && tsx src/migrate.ts",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@paperclipai/shared": "workspace:*",

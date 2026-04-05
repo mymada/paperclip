@@ -689,9 +689,14 @@ export async function applyPendingMigrations(url: string): Promise<void> {
   }
 
   if (initialState.reason === "no-migration-journal-non-empty-db") {
-    throw new Error(
-      "Database has tables but no migration journal; automatic migration is unsafe. Initialize migration history manually.",
-    );
+    // Bootstrap the migration journal table so reconciliation can detect already-applied statements.
+    const utilSql = createUtilitySql(url);
+    try {
+      await ensureMigrationJournalTable(utilSql);
+    } finally {
+      await utilSql.end();
+    }
+    // Fall through: status is now "pending-migrations" with an empty journal table.
   }
 
   let state = await inspectMigrations(url);

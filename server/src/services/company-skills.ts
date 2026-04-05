@@ -102,6 +102,8 @@ type RuntimeSkillEntryOptions = {
 };
 
 const skillInventoryRefreshPromises = new Map<string, Promise<void>>();
+const skillInventoryLastRefresh = new Map<string, number>();
+const REFRESH_TTL = 5 * 60 * 1000; // 5 minutes
 
 const PROJECT_SCAN_DIRECTORY_ROOTS = [
   "skills",
@@ -1504,6 +1506,11 @@ export function companySkillService(db: Db) {
   }
 
   async function ensureSkillInventoryCurrent(companyId: string) {
+    const lastRefresh = skillInventoryLastRefresh.get(companyId) ?? 0;
+    if (Date.now() - lastRefresh < REFRESH_TTL) {
+      return;
+    }
+
     const existingRefresh = skillInventoryRefreshPromises.get(companyId);
     if (existingRefresh) {
       await existingRefresh;
@@ -1513,6 +1520,7 @@ export function companySkillService(db: Db) {
     const refreshPromise = (async () => {
       await ensureBundledSkills(companyId);
       await pruneMissingLocalPathSkills(companyId);
+      skillInventoryLastRefresh.set(companyId, Date.now());
     })();
 
     skillInventoryRefreshPromises.set(companyId, refreshPromise);
@@ -1573,46 +1581,14 @@ export function companySkillService(db: Db) {
       return desiredSkills.includes(key);
     });
 
-    return Promise.all(
-      desiredAgents.map(async (agent) => {
-        const adapter = findServerAdapter(agent.adapterType);
-        let actualState: string | null = null;
-
-        if (!adapter?.listSkills) {
-          actualState = "unsupported";
-        } else {
-          try {
-            const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-              agent.companyId,
-              agent.adapterConfig as Record<string, unknown>,
-            );
-            const runtimeSkillEntries = await listRuntimeSkillEntries(agent.companyId);
-            const snapshot = await adapter.listSkills({
-              agentId: agent.id,
-              companyId: agent.companyId,
-              adapterType: agent.adapterType,
-              config: {
-                ...runtimeConfig,
-                paperclipRuntimeSkills: runtimeSkillEntries,
-              },
-            });
-            actualState = snapshot.entries.find((entry) => entry.key === key)?.state
-              ?? (snapshot.supported ? "missing" : "unsupported");
-          } catch {
-            actualState = "unknown";
-          }
-        }
-
-        return {
-          id: agent.id,
-          name: agent.name,
-          urlKey: agent.urlKey,
-          adapterType: agent.adapterType,
-          desired: true,
-          actualState,
-        };
-      }),
-    );
+    return desiredAgents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      urlKey: agent.urlKey,
+      adapterType: agent.adapterType,
+      desired: true,
+      actualState: null,
+    }));
   }
 
   async function detail(companyId: string, id: string): Promise<CompanySkillDetail | null> {

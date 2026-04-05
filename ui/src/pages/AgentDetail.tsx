@@ -44,6 +44,14 @@ import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Popover,
@@ -530,6 +538,7 @@ export function AgentDetail() {
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [terminateConfirmOpen, setTerminateConfirmOpen] = useState(false);
   const activeView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
   const needsDashboardData = activeView === "dashboard";
   const needsRunData = activeView === "runs" || Boolean(urlRunId);
@@ -768,8 +777,8 @@ export function AgentDetail() {
         crumbs.push({ label: "Instructions" });
       } else if (activeView === "configuration") {
         crumbs.push({ label: "Configuration" });
-      // } else if (activeView === "skills") { // TODO: bring back later
-      //   crumbs.push({ label: "Skills" });
+      } else if (activeView === "skills") {
+        crumbs.push({ label: "Skills" });
       } else if (activeView === "runs") {
         crumbs.push({ label: "Runs" });
       } else if (activeView === "budget") {
@@ -889,8 +898,8 @@ export function AgentDetail() {
               <button
                 className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
                 onClick={() => {
-                  agentAction.mutate("terminate");
                   setMoreOpen(false);
+                  setTerminateConfirmOpen(true);
                 }}
               >
                 <Trash2 className="h-3 w-3" />
@@ -898,6 +907,31 @@ export function AgentDetail() {
               </button>
             </PopoverContent>
           </Popover>
+
+          <Dialog open={terminateConfirmOpen} onOpenChange={setTerminateConfirmOpen}>
+            <DialogContent showCloseButton={false}>
+              <DialogHeader>
+                <DialogTitle>Terminate agent?</DialogTitle>
+                <DialogDescription>
+                  This will permanently terminate <strong>{agent.name}</strong>. The agent will no longer run heartbeats and cannot be reactivated from the UI.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setTerminateConfirmOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    agentAction.mutate("terminate");
+                    setTerminateConfirmOpen(false);
+                  }}
+                >
+                  Terminate
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -2240,7 +2274,7 @@ function PromptsTab({
                 </p>
               </div>
             </div>
-            {selectedFileExists && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
+            {selectedFileExists && !selectedFileSummary?.deprecated && fileOptions.length > 1 && (
               <Button
                 type="button"
                 size="sm"

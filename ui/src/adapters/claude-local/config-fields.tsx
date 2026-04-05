@@ -25,36 +25,33 @@ export function ClaudeLocalConfigFields({
   eff,
   mark,
   models,
-  hideInstructionsFile,
 }: AdapterConfigFieldsProps) {
   return (
     <>
-      {!hideInstructionsFile && (
-        <Field label="Agent instructions file" hint={instructionsFileHint}>
-          <div className="flex items-center gap-2">
-            <DraftInput
-              value={
-                isCreate
-                  ? values!.instructionsFilePath ?? ""
-                  : eff(
-                      "adapterConfig",
-                      "instructionsFilePath",
-                      String(config.instructionsFilePath ?? ""),
-                    )
-              }
-              onCommit={(v) =>
-                isCreate
-                  ? set!({ instructionsFilePath: v })
-                  : mark("adapterConfig", "instructionsFilePath", v || undefined)
-              }
-              immediate
-              className={inputClass}
-              placeholder="/absolute/path/to/AGENTS.md"
-            />
-            <ChoosePathButton />
-          </div>
-        </Field>
-      )}
+      <Field label="Agent instructions file" hint={instructionsFileHint}>
+        <div className="flex items-center gap-2">
+          <DraftInput
+            value={
+              isCreate
+                ? values!.instructionsFilePath ?? ""
+                : eff(
+                    "adapterConfig",
+                    "instructionsFilePath",
+                    String(config.instructionsFilePath ?? ""),
+                  )
+            }
+            onCommit={(v) =>
+              isCreate
+                ? set!({ instructionsFilePath: v })
+                : mark("adapterConfig", "instructionsFilePath", v || undefined)
+            }
+            immediate
+            className={inputClass}
+            placeholder="/absolute/path/to/AGENTS.md"
+          />
+          <ChoosePathButton />
+        </div>
+      </Field>
       <LocalWorkspaceRuntimeFields
         isCreate={isCreate}
         values={values}

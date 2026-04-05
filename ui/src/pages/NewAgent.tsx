@@ -18,7 +18,10 @@ import { Shield } from "lucide-react";
 import { cn, agentUrl } from "../lib/utils";
 import { roleLabels } from "../components/agent-config-primitives";
 import { AgentConfigForm, type CreateConfigValues } from "../components/AgentConfigForm";
-import { defaultCreateValues } from "../components/agent-config-defaults";
+import {
+  defaultCreateValues,
+  DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
+} from "../components/agent-config-defaults";
 import { getUIAdapter } from "../adapters";
 import { ReportsToPicker } from "../components/ReportsToPicker";
 import {
@@ -50,6 +53,7 @@ function createValuesForAdapterType(
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
   } else if (adapterType === "gemini_local") {
     nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
+    nextValues.dangerouslyBypassSandbox = DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX;
   } else if (adapterType === "cursor") {
     nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
   } else if (adapterType === "opencode_local") {

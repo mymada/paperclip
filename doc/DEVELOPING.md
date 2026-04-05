@@ -146,7 +146,6 @@ For `codex_local`, Paperclip also manages a per-company Codex home under the ins
 - `~/.paperclip/instances/default/companies/<company-id>/codex-home`
 
 If the `codex` CLI is not installed or not on `PATH`, `codex_local` agent runs fail at execution time with a clear adapter error. Quota polling uses a short-lived `codex app-server` subprocess: when `codex` cannot be spawned, that provider reports `ok: false` in aggregated quota results and the API server keeps running (it must not exit on a missing binary).
-
 ## Worktree-local Instances
 
 When developing from multiple git worktrees, do not point two Paperclip servers at the same embedded PostgreSQL data directory.
@@ -155,17 +154,14 @@ Instead, create a repo-local Paperclip config plus an isolated instance for the 
 
 ```sh
 paperclipai worktree init
-# or create the git worktree and initialize it in one step:
-pnpm paperclipai worktree:make paperclip-pr-432
 ```
 
 This command:
 
 - writes repo-local files at `.paperclip/config.json` and `.paperclip/.env`
 - creates an isolated instance under `~/.paperclip-worktrees/instances/<worktree-id>/`
-- when run inside a linked git worktree, mirrors the effective git hooks into that worktree's private git dir
 - picks a free app port and embedded PostgreSQL port
-- by default seeds the isolated DB in `minimal` mode from the current effective Paperclip instance/config (repo-local worktree config when present, otherwise the default instance) via a logical SQL snapshot
+- by default seeds the isolated DB in `minimal` mode from your main instance via a logical SQL snapshot
 
 Seed modes:
 
@@ -184,7 +180,6 @@ That repo-local env also sets:
 - `PAPERCLIP_WORKTREE_COLOR=<hex-color>`
 
 The server/UI use those values for worktree-specific branding such as the top banner and dynamically colored favicon.
-
 Print shell exports explicitly when needed:
 
 ```sh
@@ -193,85 +188,16 @@ paperclipai worktree env
 eval "$(paperclipai worktree env)"
 ```
 
-### Worktree CLI Reference
-
-**`pnpm paperclipai worktree init [options]`** — Create repo-local config/env and an isolated instance for the current worktree.
-
-| Option | Description |
-|---|---|
-| `--name <name>` | Display name used to derive the instance id |
-| `--instance <id>` | Explicit isolated instance id |
-| `--home <path>` | Home root for worktree instances (default: `~/.paperclip-worktrees`) |
-| `--from-config <path>` | Source config.json to seed from |
-| `--from-data-dir <path>` | Source PAPERCLIP_HOME used when deriving the source config |
-| `--from-instance <id>` | Source instance id (default: `default`) |
-| `--server-port <port>` | Preferred server port |
-| `--db-port <port>` | Preferred embedded Postgres port |
-| `--seed-mode <mode>` | Seed profile: `minimal` or `full` (default: `minimal`) |
-| `--no-seed` | Skip database seeding from the source instance |
-| `--force` | Replace existing repo-local config and isolated instance data |
-
-Examples:
+Useful options:
 
 ```sh
 paperclipai worktree init --no-seed
+paperclipai worktree init --seed-mode minimal
 paperclipai worktree init --seed-mode full
 paperclipai worktree init --from-instance default
 paperclipai worktree init --from-data-dir ~/.paperclip
 paperclipai worktree init --force
 ```
-
-Repair an already-created repo-managed worktree and reseed its isolated instance from the main default install:
-
-```sh
-cd ~/.paperclip/worktrees/PAP-884-ai-commits-component
-pnpm paperclipai worktree init --force --seed-mode minimal \
-  --name PAP-884-ai-commits-component \
-  --from-config ~/.paperclip/instances/default/config.json
-```
-
-That rewrites the worktree-local `.paperclip/config.json` + `.paperclip/.env`, recreates the isolated instance under `~/.paperclip-worktrees/instances/<worktree-id>/`, and preserves the git worktree contents themselves.
-
-**`pnpm paperclipai worktree:make <name> [options]`** — Create `~/NAME` as a git worktree, then initialize an isolated Paperclip instance inside it. This combines `git worktree add` with `worktree init` in a single step.
-
-| Option | Description |
-|---|---|
-| `--start-point <ref>` | Remote ref to base the new branch on (e.g. `origin/main`) |
-| `--instance <id>` | Explicit isolated instance id |
-| `--home <path>` | Home root for worktree instances (default: `~/.paperclip-worktrees`) |
-| `--from-config <path>` | Source config.json to seed from |
-| `--from-data-dir <path>` | Source PAPERCLIP_HOME used when deriving the source config |
-| `--from-instance <id>` | Source instance id (default: `default`) |
-| `--server-port <port>` | Preferred server port |
-| `--db-port <port>` | Preferred embedded Postgres port |
-| `--seed-mode <mode>` | Seed profile: `minimal` or `full` (default: `minimal`) |
-| `--no-seed` | Skip database seeding from the source instance |
-| `--force` | Replace existing repo-local config and isolated instance data |
-
-Examples:
-
-```sh
-pnpm paperclipai worktree:make paperclip-pr-432
-pnpm paperclipai worktree:make my-feature --start-point origin/main
-pnpm paperclipai worktree:make experiment --no-seed
-```
-
-**`pnpm paperclipai worktree env [options]`** — Print shell exports for the current worktree-local Paperclip instance.
-
-| Option | Description |
-|---|---|
-| `-c, --config <path>` | Path to config file |
-| `--json` | Print JSON instead of shell exports |
-
-Examples:
-
-```sh
-pnpm paperclipai worktree env
-pnpm paperclipai worktree env --json
-eval "$(pnpm paperclipai worktree env)"
-```
-
-For project execution worktrees, Paperclip can also run a project-defined provision command after it creates or reuses an isolated git worktree. Configure this on the project's execution workspace policy (`workspaceStrategy.provisionCommand`). The command runs inside the derived worktree and receives `PAPERCLIP_WORKSPACE_*`, `PAPERCLIP_PROJECT_ID`, `PAPERCLIP_AGENT_ID`, and `PAPERCLIP_ISSUE_*` environment variables so each repo can bootstrap itself however it wants.
 
 ## Quick Health Checks
 

@@ -18,6 +18,7 @@ const mockIssueService = vi.hoisted(() => ({
   update: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
+  findDependentsToWake: vi.fn().mockResolvedValue([]),
 }));
 
 const mockFeedbackExportService = vi.hoisted(() => ({

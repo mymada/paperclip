@@ -39,6 +39,7 @@ import {
   adapterLabels,
 } from "./agent-config-primitives";
 import { defaultCreateValues } from "./agent-config-defaults";
+import { DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX } from "./agent-config-defaults";
 import { getUIAdapter } from "../adapters";
 import { ClaudeLocalAdvancedFields } from "../adapters/claude-local/config-fields";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -594,6 +595,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                         DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
                     } else if (t === "gemini_local") {
                       nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
+                      nextValues.dangerouslyBypassSandbox = DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX;
                     } else if (t === "cursor") {
                       nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
                     } else if (t === "opencode_local") {
@@ -624,6 +626,10 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                               dangerouslyBypassApprovalsAndSandbox:
                                 DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
                             }
+                          : t === "gemini_local"
+                            ? {
+                                sandbox: !DEFAULT_GEMINI_LOCAL_BYPASS_SANDBOX,
+                              }
                           : {}),
                       },
                     }));

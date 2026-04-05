@@ -2,6 +2,8 @@ import type { AdapterConfigFieldsProps } from "../types";
 import {
   DraftInput,
   Field,
+  ToggleField,
+  help,
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
 
@@ -19,33 +21,59 @@ export function GeminiLocalConfigFields({
   mark,
   hideInstructionsFile,
 }: AdapterConfigFieldsProps) {
-  if (hideInstructionsFile) return null;
+  const bypassEnabled = config.dangerouslyBypassSandbox === true || !config.sandbox;
+
   return (
     <>
-      <Field label="Agent instructions file" hint={instructionsFileHint}>
-        <div className="flex items-center gap-2">
-          <DraftInput
-            value={
-              isCreate
-                ? values!.instructionsFilePath ?? ""
-                : eff(
-                    "adapterConfig",
-                    "instructionsFilePath",
-                    String(config.instructionsFilePath ?? ""),
-                  )
-            }
-            onCommit={(v) =>
-              isCreate
-                ? set!({ instructionsFilePath: v })
-                : mark("adapterConfig", "instructionsFilePath", v || undefined)
-            }
-            immediate
-            className={inputClass}
-            placeholder="/absolute/path/to/AGENTS.md"
-          />
-          <ChoosePathButton />
-        </div>
-      </Field>
+      {!hideInstructionsFile && (
+        <Field label="Agent instructions file" hint={instructionsFileHint}>
+          <div className="flex items-center gap-2">
+            <DraftInput
+              value={
+                isCreate
+                  ? values!.instructionsFilePath ?? ""
+                  : eff(
+                      "adapterConfig",
+                      "instructionsFilePath",
+                      String(config.instructionsFilePath ?? ""),
+                    )
+              }
+              onCommit={(v) =>
+                isCreate
+                  ? set!({ instructionsFilePath: v })
+                  : mark("adapterConfig", "instructionsFilePath", v || undefined)
+              }
+              immediate
+              className={inputClass}
+              placeholder="/absolute/path/to/AGENTS.md"
+            />
+            <ChoosePathButton />
+          </div>
+        </Field>
+      )}
+
+      <div className="mt-4 space-y-4">
+        <div className="text-[10px] text-muted-foreground uppercase tracking-widest opacity-50">Gemini Sandbox Fix v1</div>
+        <ToggleField
+          label="Bypass sandbox"
+          hint={help.dangerouslyBypassSandbox}
+          checked={
+            isCreate
+              ? values!.dangerouslyBypassSandbox ?? false
+              : !eff(
+                  "adapterConfig",
+                  "sandbox",
+                  !bypassEnabled,
+                )
+          }
+          onChange={(v) =>
+            isCreate
+              ? set!({ dangerouslyBypassSandbox: v })
+              : mark("adapterConfig", "sandbox", !v)
+          }
+        />
+      </div>
     </>
   );
 }
+

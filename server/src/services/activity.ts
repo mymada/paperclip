@@ -1,16 +1,23 @@
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql, getTableColumns } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog, heartbeatRuns, issues } from "@paperclipai/db";
+import { activityLog, heartbeatRuns, issues, agents, projects, goals, approvals } from "@paperclipai/db";
 
 export interface ActivityFilters {
   companyId: string;
   agentId?: string;
   entityType?: string;
   entityId?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export function activityService(db: Db) {
   const issueIdAsText = sql<string>`${issues.id}::text`;
+  const agentIdAsText = sql<string>`${agents.id}::text`;
+  const projectIdAsText = sql<string>`${projects.id}::text`;
+  const goalIdAsText = sql<string>`${goals.id}::text`;
+  const approvalIdAsText = sql<string>`${approvals.id}::text`;
+
   return {
     list: (filters: ActivityFilters) => {
       const conditions = [eq(activityLog.companyId, filters.companyId)];
@@ -25,14 +32,49 @@ export function activityService(db: Db) {
         conditions.push(eq(activityLog.entityId, filters.entityId));
       }
 
-      return db
-        .select({ activityLog })
+      const query = db
+        .select({
+          ...getTableColumns(activityLog),
+          actorName: agents.name,
+          issueIdentifier: issues.identifier,
+          issueTitle: issues.title,
+          agentName: agents.name,
+          projectName: projects.name,
+          goalTitle: goals.title,
+        })
         .from(activityLog)
         .leftJoin(
           issues,
           and(
             eq(activityLog.entityType, sql`'issue'`),
             eq(activityLog.entityId, issueIdAsText),
+          ),
+        )
+        .leftJoin(
+          agents,
+          or(
+            and(
+              eq(activityLog.actorType, sql`'agent'`),
+              eq(activityLog.actorId, agentIdAsText),
+            ),
+            and(
+              eq(activityLog.entityType, sql`'agent'`),
+              eq(activityLog.entityId, agentIdAsText),
+            ),
+          ),
+        )
+        .leftJoin(
+          projects,
+          and(
+            eq(activityLog.entityType, sql`'project'`),
+            eq(activityLog.entityId, projectIdAsText),
+          ),
+        )
+        .leftJoin(
+          goals,
+          and(
+            eq(activityLog.entityType, sql`'goal'`),
+            eq(activityLog.entityId, goalIdAsText),
           ),
         )
         .where(
@@ -44,8 +86,31 @@ export function activityService(db: Db) {
             ),
           ),
         )
-        .orderBy(desc(activityLog.createdAt))
-        .then((rows) => rows.map((r) => r.activityLog));
+        .orderBy(desc(activityLog.createdAt));
+
+      if (filters.limit !== undefined) {
+        query.limit(filters.limit);
+      }
+      if (filters.offset !== undefined) {
+        query.offset(filters.offset);
+      }
+
+      return query.then((rows) =>
+        rows.map((r) => {
+          const event = { ...r } as any;
+          if (r.entityType === "issue") {
+            event.entityName = r.issueIdentifier || r.entityId.slice(0, 8);
+            event.entityTitle = r.issueTitle;
+          } else if (r.entityType === "agent") {
+            event.entityName = r.agentName;
+          } else if (r.entityType === "project") {
+            event.entityName = r.projectName;
+          } else if (r.entityType === "goal") {
+            event.entityName = r.goalTitle;
+          }
+          return event;
+        }),
+      );
     },
 
     forIssue: (issueId: string) =>

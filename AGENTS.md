@@ -138,11 +138,11 @@ When adding endpoints:
 - Use company selection context for company-scoped pages
 - Surface failures clearly; do not silently ignore API errors
 
-## 10. Definition of Done
+## 11. Agent-Specific Best Practices
 
-A change is done when all are true:
+To ensure smooth collaboration between AI agents and human contributors:
 
-1. Behavior matches `doc/SPEC-implementation.md`
-2. Typecheck, tests, and build pass
-3. Contracts are synced across db/shared/server/ui
-4. Docs updated when behavior or commands change
+1. **Follow Agent Memory:** AI agents (e.g., Jules) must consult their specific learning and instruction files in `.jules/`, `.bolt/`, etc., before starting tasks.
+2. **Conflict Prevention:** Always synchronize with the `dev` branch (`git fetch` + rebase) before making changes. Favor surgical, localized updates over broad refactoring to minimize merge noise.
+3. **Commit Hygiene:** Use clear, descriptive commit messages. Do not bundle unrelated changes (e.g., reformatting) with functional updates.
+4. **Validation:** Agents are responsible for verifying their own changes using `pnpm -r typecheck` and `pnpm test:run` before submission.

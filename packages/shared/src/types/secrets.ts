@@ -26,6 +26,7 @@ export interface CompanySecret {
   id: string;
   companyId: string;
   name: string;
+  scope: string | null;
   provider: SecretProvider;
   externalRef: string | null;
   latestVersion: number;

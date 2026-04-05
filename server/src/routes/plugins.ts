@@ -23,9 +23,9 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import type { Request } from "express";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, pluginLogs, pluginWebhookDeliveries } from "@paperclipai/db";
+import { agents as agentsTable, companies, pluginLogs, pluginWebhookDeliveries } from "@paperclipai/db";
 import type {
   PluginStatus,
   PaperclipPluginManifestV1,
@@ -49,6 +49,8 @@ import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
+import { agentService } from "../services/agents.js";
+import { agentInstructionsService } from "../services/agent-instructions.js";
 
 /** UI slot declaration extracted from plugin manifest */
 type PluginUiSlotDeclaration = NonNullable<NonNullable<PaperclipPluginManifestV1["ui"]>["slots"]>[number];
@@ -91,7 +93,7 @@ interface AvailablePluginExample {
   displayName: string;
   description: string;
   localPath: string;
-  tag: "example";
+  tag: "example" | "official";
 }
 
 /** Response body for GET /api/plugins/:pluginId/health */
@@ -115,6 +117,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
 const BUNDLED_PLUGIN_EXAMPLES: AvailablePluginExample[] = [
+  {
+    packageName: "@paperclipai/plugin-erpnext",
+    pluginKey: "paperclip-erpnext",
+    displayName: "ERPNext",
+    description:
+      "Connects Paperclip agents to a Frappe/ERPNext instance. Agents can read and write any doctype, submit documents, run reports, and receive real-time webhook events — making the ERP fully transparent and actionable within Paperclip.",
+    localPath: "packages/plugins/plugin-erpnext",
+    tag: "official",
+  },
   {
     packageName: "@paperclipai/plugin-hello-world-example",
     pluginKey: "paperclip.hello-world-example",
@@ -299,6 +310,120 @@ interface PluginToolExecuteRequest {
  * @param bridgeDeps - Optional bridge proxy dependencies for getData/performAction
  * @returns Express router with plugin routes mounted
  */
+/**
+ * Auto-create agents declared in `manifest.bootstrapAgents` for all companies.
+ *
+ * Idempotent: agents whose `metadata.pluginBootstrapSlug` already matches a
+ * declared slug are skipped. Reporting-chain slugs are resolved after all
+ * agents have been created.
+ *
+ * Errors are caught per-company so a single failure does not abort the rest.
+ */
+async function bootstrapPluginAgents(
+  db: Db,
+  manifest: PaperclipPluginManifestV1,
+): Promise<void> {
+  const declarations = manifest.bootstrapAgents;
+  if (!declarations || declarations.length === 0) return;
+
+  const service = agentService(db);
+  const instructionsSvc = agentInstructionsService();
+
+  // Fetch all companies so we can bootstrap for each one.
+  const allCompanies = await db.select({ id: companies.id }).from(companies);
+
+  for (const company of allCompanies) {
+    try {
+      await bootstrapPluginAgentsForCompany(
+        db,
+        service,
+        instructionsSvc,
+        company.id,
+        declarations,
+      );
+    } catch (err) {
+      // Log but continue so one broken company does not block others.
+      console.error(
+        `[bootstrapPluginAgents] failed for company ${company.id} (plugin ${manifest.id}):`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+}
+
+/**
+ * Bootstrap declared agents for a single company.
+ * Returns the map of slug → created/existing agent id for reporting chains.
+ */
+async function bootstrapPluginAgentsForCompany(
+  db: Db,
+  service: ReturnType<typeof agentService>,
+  instructionsSvc: ReturnType<typeof agentInstructionsService>,
+  companyId: string,
+  declarations: NonNullable<PaperclipPluginManifestV1["bootstrapAgents"]>,
+): Promise<void> {
+  // Fetch existing agents that were previously bootstrapped by a plugin.
+  const existingRows = await db
+    .select({ id: agentsTable.id, metadata: agentsTable.metadata })
+    .from(agentsTable)
+    .where(and(eq(agentsTable.companyId, companyId), ne(agentsTable.status, "terminated")));
+
+  // Build a set of slugs that already exist.
+  const existingSlugToId = new Map<string, string>();
+  for (const row of existingRows) {
+    const meta = row.metadata as Record<string, unknown> | null | undefined;
+    const slug = typeof meta?.pluginBootstrapSlug === "string" ? meta.pluginBootstrapSlug : null;
+    if (slug) existingSlugToId.set(slug, row.id);
+  }
+
+  // Create missing agents (without reportsTo first — resolved in second pass).
+  const createdSlugToId = new Map<string, string>(existingSlugToId);
+
+  for (const decl of declarations) {
+    if (existingSlugToId.has(decl.slug)) continue;
+
+    const adapterConfig: Record<string, unknown> = {
+      ...(decl.adapterConfig ?? {}),
+    };
+
+    const created = await service.create(companyId, {
+      name: decl.name,
+      role: decl.role ?? "agent",
+      title: decl.title ?? null,
+      icon: decl.icon ?? null,
+      adapterType: decl.adapterType ?? "claude_local",
+      adapterConfig,
+      metadata: { pluginBootstrapSlug: decl.slug },
+    });
+
+    createdSlugToId.set(decl.slug, created.id);
+
+    // Write inline instructions to managed bundle if provided.
+    if (decl.instructions) {
+      const { adapterConfig: updatedAdapterConfig } = await instructionsSvc.materializeManagedBundle(
+        { id: created.id, companyId, name: created.name, adapterConfig: created.adapterConfig },
+        { "AGENTS.md": decl.instructions },
+        { entryFile: "AGENTS.md" },
+      );
+      await service.update(created.id, { adapterConfig: updatedAdapterConfig });
+    }
+  }
+
+  // Second pass: wire up reportsTo for newly created agents.
+  for (const decl of declarations) {
+    if (!decl.reportsToSlug) continue;
+    const agentId = createdSlugToId.get(decl.slug);
+    if (!agentId) continue;
+    // Only update if this agent was just created (not pre-existing).
+    if (existingSlugToId.has(decl.slug)) continue;
+
+    const managerId = createdSlugToId.get(decl.reportsToSlug);
+    if (!managerId) continue;
+
+    await service.update(agentId, { reportsTo: managerId });
+  }
+}
+
 export function pluginRoutes(
   db: Db,
   loader: ReturnType<typeof pluginLoader>,
@@ -492,7 +617,7 @@ export function pluginRoutes(
 
     const pluginId = req.query.pluginId as string | undefined;
     const filter = pluginId ? { pluginId } : undefined;
-    const tools = toolDeps.toolDispatcher.listToolsForAgent(filter);
+    const tools = await toolDeps.toolDispatcher.listToolsForAgent(filter);
     res.json(tools);
   });
 
@@ -656,6 +781,10 @@ export function pluginRoutes(
           packageName: updated?.packageName ?? existingPlugin.packageName,
           version: updated?.version ?? existingPlugin.version,
           source: isLocalPath ? "local_path" : "npm",
+        });
+        // Auto-create bootstrap agents declared in the manifest (idempotent).
+        bootstrapPluginAgents(db, discovered.manifest).catch((err) => {
+          console.error("[plugins/install] bootstrapPluginAgents error:", err instanceof Error ? err.message : String(err));
         });
         publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: existingPlugin.id, action: "installed" } });
         res.json(updated);
@@ -1280,6 +1409,13 @@ export function pluginRoutes(
         pluginKey: plugin.pluginKey,
         version: result?.version ?? plugin.version,
       });
+      // Auto-create bootstrap agents declared in the manifest (idempotent).
+      const enabledManifest = result?.manifestJson ?? plugin.manifestJson;
+      if (enabledManifest) {
+        bootstrapPluginAgents(db, enabledManifest).catch((err) => {
+          console.error("[plugins/enable] bootstrapPluginAgents error:", err instanceof Error ? err.message : String(err));
+        });
+      }
       publishGlobalLiveEvent({ type: "plugin.ui.updated", payload: { pluginId: plugin.id, action: "enabled" } });
       res.json(result);
     } catch (err) {

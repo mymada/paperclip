@@ -56,6 +56,21 @@ function buildSourceConfig(): PaperclipConfig {
         intervalMinutes: 60,
         retentionDays: 30,
         dir: "/tmp/main/backups",
+        compression: true,
+        includeFiles: {
+          skills: true,
+          projects: true,
+          workspaces: true,
+          storage: true,
+          secrets: true,
+          config: true,
+        },
+        gfs: {
+          enabled: true,
+          hourlyCount: 24,
+          dailyCount: 7,
+          weeklyCount: 4,
+        },
       },
     },
     logging: {
@@ -371,6 +386,21 @@ describe("worktree helpers", () => {
                 intervalMinutes: 60,
                 retentionDays: 30,
                 dir: path.join(siblingInstanceRoot, "backups"),
+                compression: true,
+                includeFiles: {
+                  skills: true,
+                  projects: true,
+                  workspaces: true,
+                  storage: true,
+                  secrets: true,
+                  config: true,
+                },
+                gfs: {
+                  enabled: true,
+                  hourlyCount: 24,
+                  dailyCount: 7,
+                  weeklyCount: 4,
+                },
               },
             },
             logging: {

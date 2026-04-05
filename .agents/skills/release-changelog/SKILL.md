@@ -1,7 +1,7 @@
 ---
 name: release-changelog
 description: >
-  Generate the stable Paperclip release changelog at releases/vYYYY.MDD.P.md by
+  Generate the stable Paperclip release changelog at releases/vYYYY.M.D.md by
   reading commits, changesets, and merged PR context since the last stable tag.
 ---
 
@@ -13,20 +13,20 @@ Generate the user-facing changelog for the **stable** Paperclip release.
 
 Paperclip uses **calendar versioning (calver)**:
 
-- Stable releases: `YYYY.MDD.P` (e.g. `2026.318.0`)
-- Canary releases: `YYYY.MDD.P-canary.N` (e.g. `2026.318.1-canary.0`)
-- Git tags: `vYYYY.MDD.P` for stable, `canary/vYYYY.MDD.P-canary.N` for canary
+- Stable releases: `YYYY.M.D` (e.g. `2026.3.17`)
+- Canary releases: `YYYY.M.D-canary.N` (e.g. `2026.3.17-canary.0`)
+- Git tags: `vYYYY.M.D` for stable, `canary/vYYYY.M.D-canary.N` for canary
 
 There are no major/minor/patch bumps. The stable version is derived from the
-intended release date (UTC) plus the next same-day stable patch slot.
+intended release date (UTC).
 
 Output:
 
-- `releases/vYYYY.MDD.P.md`
+- `releases/vYYYY.M.D.md`
 
 Important rules:
 
-- even if there are canary releases such as `2026.318.1-canary.0`, the changelog file stays `releases/v2026.318.1.md`
+- even if there are canary releases such as `2026.3.17-canary.0`, the changelog file stays `releases/v2026.3.17.md`
 - do not derive versions from semver bump types
 - do not create canary changelog files
 
@@ -35,7 +35,7 @@ Important rules:
 Before generating anything, check whether the file already exists:
 
 ```bash
-ls releases/vYYYY.MDD.P.md 2>/dev/null
+ls releases/vYYYY.M.D.md 2>/dev/null
 ```
 
 If it exists:
@@ -57,11 +57,11 @@ git log v{last}..HEAD --oneline --no-merges
 The stable version comes from one of:
 
 - an explicit maintainer request
-- `./scripts/release.sh stable --date YYYY-MM-DD --print-version`
+- the intended release date (UTC) — default is today's date
 - the release plan already agreed in `doc/RELEASING.md`
 
 Do not derive the changelog version from a canary tag or prerelease suffix.
-Do not derive major/minor/patch bumps from API intent — calver uses the date and same-day stable slot.
+Do not derive major/minor/patch bumps — calver uses the date.
 
 ## Step 2 — Gather the Raw Inputs
 
@@ -144,7 +144,7 @@ Rules:
 Template:
 
 ```markdown
-# vYYYY.MDD.P
+# vYYYY.M.D
 
 > Released: YYYY-MM-DD
 

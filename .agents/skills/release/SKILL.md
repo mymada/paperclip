@@ -56,12 +56,10 @@ Collect these inputs up front:
 Paperclip now uses a commit-driven release model:
 
 1. every push to `master` publishes a canary automatically
-2. canaries use `YYYY.MDD.P-canary.N`
-3. stable releases use `YYYY.MDD.P`
-4. the middle slot is `MDD`, where `M` is the UTC month and `DD` is the zero-padded UTC day
-5. the stable patch slot increments when more than one stable ships on the same UTC date
-6. stable releases are manually promoted from a chosen tested commit or canary source commit
-7. only stable releases get `releases/vYYYY.MDD.P.md`, git tag `vYYYY.MDD.P`, and a GitHub Release
+2. canaries use `YYYY.M.D-canary.N`
+3. stable releases use `YYYY.M.D`
+4. stable releases are manually promoted from a chosen tested commit or canary source commit
+5. only stable releases get `releases/vYYYY.M.D.md`, git tag `vYYYY.M.D`, and a GitHub Release
 
 Critical consequences:
 
@@ -81,7 +79,7 @@ For stable promotion:
 
 1. choose the tested source ref
 2. confirm it is the exact SHA you want to promote
-3. resolve the target stable version with `./scripts/release.sh stable --date YYYY-MM-DD --print-version`
+3. derive the stable version from the intended UTC date
 
 Useful commands:
 
@@ -95,7 +93,7 @@ npm view paperclipai@canary version
 
 Stable changelog files live at:
 
-- `releases/vYYYY.MDD.P.md`
+- `releases/vYYYY.M.D.md`
 
 Invoke `release-changelog` and generate or update the stable notes only.
 
@@ -130,7 +128,7 @@ Confirm:
 
 1. verification passed
 2. npm canary publish succeeded
-3. git tag `canary/vYYYY.MDD.P-canary.N` exists
+3. git tag `canary/vYYYY.M.D-canary.N` exists
 
 Useful checks:
 
@@ -182,26 +180,24 @@ Inputs:
 
 Before live stable:
 
-1. resolve the target stable version with `./scripts/release.sh stable --date YYYY-MM-DD --print-version`
-2. ensure `releases/vYYYY.MDD.P.md` exists on the source ref
-3. run the stable workflow in dry-run mode first when practical
-4. then run the real stable publish
+1. ensure `releases/vYYYY.M.D.md` exists on the source ref
+2. run the stable workflow in dry-run mode first when practical
+3. then run the real stable publish
 
 The stable workflow:
 
 - re-verifies the exact source ref
-- computes the next stable patch slot for the chosen UTC date
-- publishes `YYYY.MDD.P` under dist-tag `latest`
-- creates git tag `vYYYY.MDD.P`
-- creates or updates the GitHub Release from `releases/vYYYY.MDD.P.md`
+- publishes `YYYY.M.D` under dist-tag `latest`
+- creates git tag `vYYYY.M.D`
+- creates or updates the GitHub Release from `releases/vYYYY.M.D.md`
 
 Local emergency/manual commands:
 
 ```bash
 ./scripts/release.sh stable --dry-run
 ./scripts/release.sh stable
-git push public-gh refs/tags/vYYYY.MDD.P
-./scripts/create-github-release.sh YYYY.MDD.P
+git push public-gh refs/tags/vYYYY.M.D
+./scripts/create-github-release.sh YYYY.M.D
 ```
 
 ## Step 7 — Finish the Other Surfaces

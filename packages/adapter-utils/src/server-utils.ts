@@ -193,6 +193,21 @@ export function joinPromptSections(
     .join(separator);
 }
 
+/**
+ * [LOGIC_REPORT] : Builds a discovery prompt for inactive skills (Progressive Disclosure)
+ * This allows any adapter (Claude, Gemini, etc.) to inform the agent of available 
+ * skills without loading their full content.
+ */
+export function buildSkillsDiscoveryPrompt(runtimeSkills: unknown): string {
+  const allSkills = Array.isArray(runtimeSkills) ? runtimeSkills : [];
+  const inactiveSkills = allSkills.filter((s: any) => s.discoveryOnly);
+  
+  if (inactiveSkills.length === 0) return "";
+
+  return `AVAILABLE SKILLS (Inactive - use 'activate_skill' to see instructions):\n` +
+    inactiveSkills.map((s: any) => `- ${s.key}: ${s.description || "No description"}`).join("\n");
+}
+
 export function redactEnvForLogs(env: Record<string, string>): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
@@ -869,4 +884,14 @@ export async function runChildProcess(
       })
       .catch(reject);
   });
+}
+
+export function applyBillingModeOverride(
+  autoDetected: "api" | "subscription",
+  billingMode: string,
+): "api" | "subscription" {
+  const normalized = billingMode.trim().toLowerCase();
+  if (normalized === "subscription") return "subscription";
+  if (normalized === "metered" || normalized === "api") return "api";
+  return autoDetected;
 }

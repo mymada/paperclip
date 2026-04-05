@@ -105,7 +105,7 @@ export const queryKeys = {
   },
   dashboard: (companyId: string) => ["dashboard", companyId] as const,
   sidebarBadges: (companyId: string) => ["sidebar-badges", companyId] as const,
-  activity: (companyId: string) => ["activity", companyId] as const,
+  activity: (companyId: string, filters?: Record<string, any>) => ["activity", companyId, filters ?? {}] as const,
   costs: (companyId: string, from?: string, to?: string) =>
     ["costs", companyId, from, to] as const,
   usageByProvider: (companyId: string, from?: string, to?: string) =>
@@ -143,5 +143,21 @@ export const queryKeys = {
     config: (pluginId: string) => ["plugins", pluginId, "config"] as const,
     dashboard: (pluginId: string) => ["plugins", pluginId, "dashboard"] as const,
     logs: (pluginId: string) => ["plugins", pluginId, "logs"] as const,
+  },
+  companyLessons: {
+    list: (companyId: string, status?: string) => ["company-lessons", companyId, status ?? "all"] as const,
+  },
+  notificationRules: {
+    list: (companyId: string) => ["notification-rules", companyId] as const,
+    deliveries: (companyId: string) => ["notification-deliveries", companyId] as const,
+  },
+  plans: {
+    list: (companyId: string, issueId?: string) => ["plans", companyId, issueId ?? "all"] as const,
+    detail: (companyId: string, planId: string) => ["plans", companyId, "detail", planId] as const,
+  },
+  channels: {
+    connections: (companyId: string) => ["channel-connections", companyId] as const,
+    sessions: (companyId: string) => ["channel-sessions", companyId] as const,
+    pairings: (companyId: string) => ["channel-pairings", companyId] as const,
   },
 };

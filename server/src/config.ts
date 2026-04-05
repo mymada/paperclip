@@ -58,6 +58,17 @@ export interface Config {
   databaseBackupIntervalMinutes: number;
   databaseBackupRetentionDays: number;
   databaseBackupDir: string;
+  databaseBackupCompression: boolean;
+  databaseBackupIncludeSkills: boolean;
+  databaseBackupIncludeProjects: boolean;
+  databaseBackupIncludeWorkspaces: boolean;
+  databaseBackupIncludeStorage: boolean;
+  databaseBackupIncludeSecrets: boolean;
+  databaseBackupIncludeConfig: boolean;
+  databaseBackupGfsEnabled: boolean;
+  databaseBackupGfsHourlyCount: number;
+  databaseBackupGfsDailyCount: number;
+  databaseBackupGfsWeeklyCount: number;
   serveUi: boolean;
   uiDevMiddleware: boolean;
   secretsProvider: SecretProvider;
@@ -223,6 +234,52 @@ export function loadConfig(): Config {
       fileDatabaseBackup?.dir ??
       resolveDefaultBackupDir(),
   );
+  const databaseBackupCompression =
+    process.env.PAPERCLIP_DB_BACKUP_COMPRESSION !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_COMPRESSION !== "false"
+      : (fileDatabaseBackup?.compression ?? true);
+  const fileInclude = fileDatabaseBackup?.includeFiles;
+  const databaseBackupIncludeSkills =
+    process.env.PAPERCLIP_DB_BACKUP_INCLUDE_SKILLS !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_INCLUDE_SKILLS !== "false"
+      : (fileInclude?.skills ?? true);
+  const databaseBackupIncludeProjects =
+    process.env.PAPERCLIP_DB_BACKUP_INCLUDE_PROJECTS !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_INCLUDE_PROJECTS !== "false"
+      : (fileInclude?.projects ?? true);
+  const databaseBackupIncludeWorkspaces =
+    process.env.PAPERCLIP_DB_BACKUP_INCLUDE_WORKSPACES !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_INCLUDE_WORKSPACES !== "false"
+      : (fileInclude?.workspaces ?? true);
+  const databaseBackupIncludeStorage =
+    process.env.PAPERCLIP_DB_BACKUP_INCLUDE_STORAGE !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_INCLUDE_STORAGE !== "false"
+      : (fileInclude?.storage ?? true);
+  const databaseBackupIncludeSecrets =
+    process.env.PAPERCLIP_DB_BACKUP_INCLUDE_SECRETS !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_INCLUDE_SECRETS !== "false"
+      : (fileInclude?.secrets ?? true);
+  const databaseBackupIncludeConfig =
+    process.env.PAPERCLIP_DB_BACKUP_INCLUDE_CONFIG !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_INCLUDE_CONFIG !== "false"
+      : (fileInclude?.config ?? true);
+  const fileGfs = fileDatabaseBackup?.gfs;
+  const databaseBackupGfsEnabled =
+    process.env.PAPERCLIP_DB_BACKUP_GFS_ENABLED !== undefined
+      ? process.env.PAPERCLIP_DB_BACKUP_GFS_ENABLED !== "false"
+      : (fileGfs?.enabled ?? true);
+  const databaseBackupGfsHourlyCount = Math.max(
+    1,
+    Number(process.env.PAPERCLIP_DB_BACKUP_GFS_HOURLY) || fileGfs?.hourlyCount || 24,
+  );
+  const databaseBackupGfsDailyCount = Math.max(
+    1,
+    Number(process.env.PAPERCLIP_DB_BACKUP_GFS_DAILY) || fileGfs?.dailyCount || 7,
+  );
+  const databaseBackupGfsWeeklyCount = Math.max(
+    1,
+    Number(process.env.PAPERCLIP_DB_BACKUP_GFS_WEEKLY) || fileGfs?.weeklyCount || 4,
+  );
 
   return {
     deploymentMode,
@@ -243,6 +300,17 @@ export function loadConfig(): Config {
     databaseBackupIntervalMinutes,
     databaseBackupRetentionDays,
     databaseBackupDir,
+    databaseBackupCompression,
+    databaseBackupIncludeSkills,
+    databaseBackupIncludeProjects,
+    databaseBackupIncludeWorkspaces,
+    databaseBackupIncludeStorage,
+    databaseBackupIncludeSecrets,
+    databaseBackupIncludeConfig,
+    databaseBackupGfsEnabled,
+    databaseBackupGfsHourlyCount,
+    databaseBackupGfsDailyCount,
+    databaseBackupGfsWeeklyCount,
     serveUi:
       process.env.SERVE_UI !== undefined
         ? process.env.SERVE_UI === "true"

@@ -127,6 +127,17 @@ export function redactCurrentUserText(input: string, opts?: CurrentUserRedaction
   return result;
 }
 
+export function filterByScope<T>(items: T[], allowedScopes: string[], getScope: (item: T) => string | null): T[] {
+  if (allowedScopes.includes("admin") || allowedScopes.includes("*")) {
+    return items;
+  }
+  return items.filter((item) => {
+    const scope = getScope(item);
+    if (!scope || scope === "general") return true;
+    return allowedScopes.includes(scope);
+  });
+}
+
 export function redactCurrentUserValue<T>(value: T, opts?: CurrentUserRedactionOptions): T {
   if (typeof value === "string") {
     return redactCurrentUserText(value, opts) as T;

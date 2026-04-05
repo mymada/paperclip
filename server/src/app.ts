@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Db } from "@paperclipai/db";
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import type { StorageService } from "./storage/types.js";
-import { httpLogger, errorHandler } from "./middleware/index.js";
+import { httpLogger, errorHandler, requestIdMiddleware } from "./middleware/index.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "./middleware/private-hostname-guard.js";
@@ -25,9 +25,17 @@ import { activityRoutes } from "./routes/activity.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { sidebarBadgeRoutes } from "./routes/sidebar-badges.js";
 import { instanceSettingsRoutes } from "./routes/instance-settings.js";
+import { backupRoutes } from "./routes/backup.js";
+import { channelRoutes } from "./routes/channels.js";
+import { planRoutes } from "./routes/plans.js";
+import { delegationRoutes } from "./routes/delegations.js";
+import { companyLessonRoutes } from "./routes/company-lessons.js";
+import { notificationRuleRoutes } from "./routes/notification-rules.js";
+import type { BackupSchedulerState, BackupLastResult, BackupLastError, BackupConfigSnapshot } from "./index.js";
 import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
+import { agentChatRoutes } from "./routes/agent-chat.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { applyUiBranding } from "./ui-branding.js";
@@ -83,10 +91,27 @@ export async function createApp(
     localPluginDir?: string;
     betterAuthHandler?: express.RequestHandler;
     resolveSession?: (req: ExpressRequest) => Promise<BetterAuthSessionResult | null>;
+    backup?: {
+      backupDir: string;
+      connectionString: string;
+      instanceRoot: string;
+      getScheduler: () => BackupSchedulerState | null;
+      getLastResult: () => BackupLastResult | null;
+      getLastError: () => BackupLastError | null;
+      getConfig: () => BackupConfigSnapshot | null;
+    };
   },
 ) {
   const app = express();
 
+  if (opts.deploymentMode === "local_trusted") {
+    logger.warn(
+      { deploymentMode: "local_trusted" },
+      "Board API access is implicitly trusted in this mode; do not expose this instance to untrusted networks",
+    );
+  }
+
+  app.use(requestIdMiddleware);
   app.use(express.json({
     // Company import/export payloads can inline full portable packages.
     limit: "10mb",
@@ -148,9 +173,10 @@ export async function createApp(
       companyDeletionEnabled: opts.companyDeletionEnabled,
     }),
   );
-  api.use("/companies", companyRoutes(db, opts.storageService));
+  api.use("/companies", companyRoutes(db));
   api.use(companySkillRoutes(db));
   api.use(agentRoutes(db));
+  api.use(agentChatRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
   api.use(projectRoutes(db));
   api.use(issueRoutes(db, opts.storageService, {
@@ -166,6 +192,14 @@ export async function createApp(
   api.use(dashboardRoutes(db));
   api.use(sidebarBadgeRoutes(db));
   api.use(instanceSettingsRoutes(db));
+  if (opts.backup) {
+    api.use("/backup", backupRoutes(opts.backup));
+  }
+  api.use(channelRoutes(db));
+  api.use(planRoutes(db));
+  api.use(delegationRoutes(db));
+  api.use(companyLessonRoutes(db));
+  api.use(notificationRuleRoutes(db));
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);
@@ -286,7 +320,7 @@ export async function createApp(
     app.get(/.*/, async (req, res, next) => {
       try {
         const templatePath = path.resolve(uiRoot, "index.html");
-        const template = fs.readFileSync(templatePath, "utf-8");
+        const template = await fs.promises.readFile(templatePath, "utf-8");
         const html = applyUiBranding(await vite.transformIndexHtml(req.originalUrl, template));
         res.status(200).set({ "Content-Type": "text/html" }).end(html);
       } catch (err) {

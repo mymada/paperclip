@@ -25,6 +25,12 @@ function resolveGeminiSkillsHome(config: Record<string, unknown>) {
     typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
       ? (config.env as Record<string, unknown>)
       : {};
+
+  const geminiHome = asString(env.GEMINI_CLI_HOME) || asString(env.GEMINI_HOME);
+  if (geminiHome) {
+    return path.join(path.resolve(geminiHome), "skills");
+  }
+
   const configuredHome = asString(env.HOME);
   const home = configuredHome ? path.resolve(configuredHome) : os.homedir();
   return path.join(home, ".gemini", "skills");
@@ -35,13 +41,21 @@ async function buildGeminiSkillSnapshot(config: Record<string, unknown>): Promis
   const desiredSkills = resolvePaperclipDesiredSkillNames(config, availableEntries);
   const skillsHome = resolveGeminiSkillsHome(config);
   const installed = await readInstalledSkillTargets(skillsHome);
+
+  const env =
+    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+      ? (config.env as Record<string, unknown>)
+      : {};
+  const geminiHome = asString(env.GEMINI_CLI_HOME) || asString(env.GEMINI_HOME);
+  const locationLabel = geminiHome ? path.join(geminiHome, "skills") : "~/.gemini/skills";
+
   return buildPersistentSkillSnapshot({
     adapterType: "gemini_local",
     availableEntries,
     desiredSkills,
     installed,
     skillsHome,
-    locationLabel: "~/.gemini/skills",
+    locationLabel,
     missingDetail: "Configured but not currently linked into the Gemini skills home.",
     externalConflictDetail: "Skill name is occupied by an external installation.",
     externalDetail: "Installed outside Paperclip management.",

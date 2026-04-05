@@ -111,7 +111,14 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       .from(agents)
       .where(eq(agents.id, scopeId))
       .then((rows) => rows[0] ?? null);
-    if (!row) throw notFound("Agent not found");
+    if (!row) {
+      return {
+        companyId: "unknown",
+        name: `Unknown Agent (${scopeId.slice(0, 8)})`,
+        paused: false,
+        pauseReason: null,
+      };
+    }
     return {
       companyId: row.companyId,
       name: row.name,
@@ -130,7 +137,14 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
     .from(projects)
     .where(eq(projects.id, scopeId))
     .then((rows) => rows[0] ?? null);
-  if (!row) throw notFound("Project not found");
+  if (!row) {
+    return {
+      companyId: "unknown",
+      name: `Unknown Project (${scopeId.slice(0, 8)})`,
+      paused: false,
+      pauseReason: null,
+    };
+  }
   return {
     companyId: row.companyId,
     name: row.name,
@@ -493,6 +507,54 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
   }
 
   return {
+    dashboardStats: async (companyId: string) => {
+      const [[activeIncidentsRow], [pendingApprovalRow], [pausedAgentsRow], [pausedProjectsRow]] =
+        await Promise.all([
+          db
+            .select({ count: sql<number>`count(*)` })
+            .from(budgetIncidents)
+            .where(and(eq(budgetIncidents.companyId, companyId), eq(budgetIncidents.status, "open"))),
+          db
+            .select({ count: sql<number>`count(*)` })
+            .from(budgetIncidents)
+            .innerJoin(approvals, eq(budgetIncidents.approvalId, approvals.id))
+            .where(
+              and(
+                eq(budgetIncidents.companyId, companyId),
+                eq(budgetIncidents.status, "open"),
+                eq(approvals.status, "pending"),
+              ),
+            ),
+          db
+            .select({ count: sql<number>`count(*)` })
+            .from(agents)
+            .where(
+              and(
+                eq(agents.companyId, companyId),
+                eq(agents.status, "paused"),
+                eq(agents.pauseReason, "budget"),
+              ),
+            ),
+          db
+            .select({ count: sql<number>`count(*)` })
+            .from(projects)
+            .where(
+              and(
+                eq(projects.companyId, companyId),
+                eq(projects.pauseReason, "budget"),
+                sql`${projects.pausedAt} is not null`,
+              ),
+            ),
+        ]);
+
+      return {
+        activeIncidents: Number(activeIncidentsRow?.count ?? 0),
+        pendingApprovalCount: Number(pendingApprovalRow?.count ?? 0),
+        pausedAgentCount: Number(pausedAgentsRow?.count ?? 0),
+        pausedProjectCount: Number(pausedProjectsRow?.count ?? 0),
+      };
+    },
+
     listPolicies: async (companyId: string): Promise<BudgetPolicy[]> => {
       const rows = await listPolicyRows(companyId);
       return rows.map((row) => ({

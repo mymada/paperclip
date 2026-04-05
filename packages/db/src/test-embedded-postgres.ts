@@ -66,6 +66,7 @@ function formatEmbeddedPostgresError(error: unknown): string {
 
 async function probeEmbeddedPostgresSupport(): Promise<EmbeddedPostgresTestSupport> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-embedded-postgres-probe-"));
+  fs.chmodSync(dataDir, 0o777); // Allow other users (like 'postgres') to access it
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
   const instance = new EmbeddedPostgres({
@@ -105,6 +106,7 @@ export async function startEmbeddedPostgresTestDatabase(
   tempDirPrefix: string,
 ): Promise<EmbeddedPostgresTestDatabase> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), tempDirPrefix));
+  fs.chmodSync(dataDir, 0o777); // Allow other users (like 'postgres') to access it
   const port = await getAvailablePort();
   const EmbeddedPostgres = await getEmbeddedPostgresCtor();
   const instance = new EmbeddedPostgres({

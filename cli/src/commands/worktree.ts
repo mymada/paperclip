@@ -41,8 +41,6 @@ import {
   projects,
   runDatabaseBackup,
   runDatabaseRestore,
-  createEmbeddedPostgresLogBuffer,
-  formatEmbeddedPostgresError,
 } from "@paperclipai/db";
 import type { Command } from "commander";
 import { ensureAgentJwtSecret, loadPaperclipEnvFile, mergePaperclipEnvEntries, readPaperclipEnvEntries, resolvePaperclipEnvFile } from "../config/env.js";
@@ -425,10 +423,10 @@ export function resolveGitWorktreeAddArgs(input: {
   return ["worktree", "add", "-b", input.branchName, input.targetPath, commitish];
 }
 
-function readPidFilePort(postmasterPidFile: string): number | null {
-  if (!existsSync(postmasterPidFile)) return null;
+async function readPidFilePort(postmasterPidFile: string): Promise<number | null> {
   try {
-    const lines = readFileSync(postmasterPidFile, "utf8").split("\n");
+    const content = await fsPromises.readFile(postmasterPidFile, "utf8");
+    const lines = content.split("\n");
     const port = Number(lines[3]?.trim());
     return Number.isInteger(port) && port > 0 ? port : null;
   } catch {
@@ -436,10 +434,10 @@ function readPidFilePort(postmasterPidFile: string): number | null {
   }
 }
 
-function readRunningPostmasterPid(postmasterPidFile: string): number | null {
-  if (!existsSync(postmasterPidFile)) return null;
+async function readRunningPostmasterPid(postmasterPidFile: string): Promise<number | null> {
   try {
-    const pid = Number(readFileSync(postmasterPidFile, "utf8").split("\n")[0]?.trim());
+    const content = await fsPromises.readFile(postmasterPidFile, "utf8");
+    const pid = Number(content.split("\n")[0]?.trim());
     if (!Number.isInteger(pid) || pid <= 0) return null;
     process.kill(pid, 0);
     return pid;
@@ -467,60 +465,33 @@ async function findAvailablePort(preferredPort: number, reserved = new Set<numbe
   return port;
 }
 
-function resolveRepoManagedWorktreesRoot(cwd: string): string | null {
-  const normalized = path.resolve(cwd);
-  const marker = `${path.sep}.paperclip${path.sep}worktrees${path.sep}`;
-  const index = normalized.indexOf(marker);
-  if (index === -1) return null;
-  const repoRoot = normalized.slice(0, index);
-  return path.resolve(repoRoot, ".paperclip", "worktrees");
-}
+function collectReservedWorktreePorts(homeDir: string): Set<number> {
+  const reserved = new Set<number>();
+  const instancesRoot = path.resolve(homeDir, "instances");
+  if (!existsSync(instancesRoot)) return reserved;
 
-function collectClaimedWorktreePorts(homeDir: string, currentInstanceId: string, cwd: string): {
-  serverPorts: Set<number>;
-  databasePorts: Set<number>;
-} {
-  const serverPorts = new Set<number>();
-  const databasePorts = new Set<number>();
-  const configPaths = new Set<string>();
-  const instancesDir = path.resolve(homeDir, "instances");
-  if (existsSync(instancesDir)) {
-    for (const entry of readdirSync(instancesDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === currentInstanceId) continue;
+  const instanceDirs = readdirSync(instancesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
 
-      const configPath = path.resolve(instancesDir, entry.name, "config.json");
-      if (existsSync(configPath)) {
-        configPaths.add(configPath);
-      }
-    }
-  }
+  for (const instanceId of instanceDirs) {
+    const configPath = path.resolve(instancesRoot, instanceId, "config.json");
+    if (!existsSync(configPath)) continue;
 
-  const repoManagedWorktreesRoot = resolveRepoManagedWorktreesRoot(cwd);
-  if (repoManagedWorktreesRoot && existsSync(repoManagedWorktreesRoot)) {
-    for (const entry of readdirSync(repoManagedWorktreesRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const configPath = path.resolve(repoManagedWorktreesRoot, entry.name, ".paperclip", "config.json");
-      if (existsSync(configPath)) {
-        configPaths.add(configPath);
-      }
-    }
-  }
-
-  for (const configPath of configPaths) {
     try {
-      const config = readConfig(configPath);
-      if (config?.server.port) {
-        serverPorts.add(config.server.port);
+      const config = JSON.parse(readFileSync(configPath, "utf8"));
+      if (typeof config.server?.port === "number") {
+        reserved.add(config.server.port);
       }
-      if (config?.database.mode === "embedded-postgres") {
-        databasePorts.add(config.database.embeddedPostgresPort);
+      if (typeof config.database?.embeddedPostgresPort === "number") {
+        reserved.add(config.database.embeddedPostgresPort);
       }
     } catch {
-      // Ignore malformed sibling configs.
+      // skip malformed configs
     }
   }
 
-  return { serverPorts, databasePorts };
+  return reserved;
 }
 
 function detectGitBranchName(cwd: string): string | null {
@@ -798,17 +769,16 @@ async function ensureEmbeddedPostgres(dataDir: string, preferredPort: number): P
   }
 
   const postmasterPidFile = path.resolve(dataDir, "postmaster.pid");
-  const runningPid = readRunningPostmasterPid(postmasterPidFile);
+  const runningPid = await readRunningPostmasterPid(postmasterPidFile);
   if (runningPid) {
     return {
-      port: readPidFilePort(postmasterPidFile) ?? preferredPort,
+      port: (await readPidFilePort(postmasterPidFile)) ?? preferredPort,
       startedByThisProcess: false,
       stop: async () => {},
     };
   }
 
   const port = await findAvailablePort(preferredPort);
-  const logBuffer = createEmbeddedPostgresLogBuffer();
   const instance = new EmbeddedPostgres({
     databaseDir: dataDir,
     user: "paperclip",
@@ -816,31 +786,17 @@ async function ensureEmbeddedPostgres(dataDir: string, preferredPort: number): P
     port,
     persistent: true,
     initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
-    onLog: logBuffer.append,
-    onError: logBuffer.append,
+    onLog: () => {},
+    onError: () => {},
   });
 
   if (!existsSync(path.resolve(dataDir, "PG_VERSION"))) {
-    try {
-      await instance.initialise();
-    } catch (error) {
-      throw formatEmbeddedPostgresError(error, {
-        fallbackMessage: `Failed to initialize embedded PostgreSQL cluster in ${dataDir} on port ${port}`,
-        recentLogs: logBuffer.getRecentLogs(),
-      });
-    }
+    await instance.initialise();
   }
   if (existsSync(postmasterPidFile)) {
     rmSync(postmasterPidFile, { force: true });
   }
-  try {
-    await instance.start();
-  } catch (error) {
-    throw formatEmbeddedPostgresError(error, {
-      fallbackMessage: `Failed to start embedded PostgreSQL on port ${port}`,
-      recentLogs: logBuffer.getRecentLogs(),
-    });
-  }
+  await instance.start();
 
   return {
     port,
@@ -959,14 +915,11 @@ async function runWorktreeInit(opts: WorktreeInitOptions): Promise<void> {
     rmSync(paths.instanceRoot, { recursive: true, force: true });
   }
 
-  const claimedPorts = collectClaimedWorktreePorts(paths.homeDir, paths.instanceId, paths.cwd);
   const preferredServerPort = opts.serverPort ?? ((sourceConfig?.server.port ?? 3100) + 1);
-  const serverPort = await findAvailablePort(preferredServerPort, claimedPorts.serverPorts);
+  const reservedPorts = collectReservedWorktreePorts(paths.homeDir);
+  const serverPort = await findAvailablePort(preferredServerPort, reservedPorts);
   const preferredDbPort = opts.dbPort ?? ((sourceConfig?.database.embeddedPostgresPort ?? 54329) + 1);
-  const databasePort = await findAvailablePort(
-    preferredDbPort,
-    new Set([...claimedPorts.databasePorts, serverPort]),
-  );
+  const databasePort = await findAvailablePort(preferredDbPort, new Set([...reservedPorts, serverPort]));
   const targetConfig = buildWorktreeConfig({
     sourceConfig,
     paths,
@@ -2120,10 +2073,15 @@ async function applyMergePlan(input: {
       )
       : new Set<string>();
 
+    const newProjects = [];
+    const newProjectWorkspaces = [];
+
     let insertedProjects = 0;
     let insertedProjectWorkspaces = 0;
+    const projectWorkspacesToInsert: Array<typeof projectWorkspaces.$inferInsert> = [];
+
     for (const project of projectImports) {
-      await tx.insert(projects).values({
+      newProjects.push({
         id: project.source.id,
         companyId,
         goalId: project.targetGoalId,
@@ -2140,11 +2098,10 @@ async function applyMergePlan(input: {
         createdAt: project.source.createdAt,
         updatedAt: project.source.updatedAt,
       });
-      insertedProjects += 1;
 
       for (const workspace of project.workspaces) {
         if (existingImportedWorkspaceIds.has(workspace.id)) continue;
-        await tx.insert(projectWorkspaces).values({
+        newProjectWorkspaces.push({
           id: workspace.id,
           companyId,
           projectId: project.source.id,
@@ -2165,8 +2122,17 @@ async function applyMergePlan(input: {
           createdAt: workspace.createdAt,
           updatedAt: workspace.updatedAt,
         });
-        insertedProjectWorkspaces += 1;
       }
+    }
+
+    if (newProjects.length > 0) {
+      await tx.insert(projects).values(newProjects);
+      insertedProjects = newProjects.length;
+    }
+
+    if (newProjectWorkspaces.length > 0) {
+      await tx.insert(projectWorkspaces).values(newProjectWorkspaces);
+      insertedProjectWorkspaces = newProjectWorkspaces.length;
     }
 
     const issueCandidates = input.plan.issuePlans.filter(
@@ -2196,12 +2162,14 @@ async function applyMergePlan(input: {
 
     const insertedIssueIdentifiers = new Map<string, string>();
     let insertedIssues = 0;
+
+    const issueValuesToInsert = [];
     for (const issue of issueInserts) {
       const issueNumber = nextIssueNumber;
       nextIssueNumber += 1;
       const identifier = `${input.company.issuePrefix}-${issueNumber}`;
       insertedIssueIdentifiers.set(issue.source.id, identifier);
-      await tx.insert(issues).values({
+      issueValuesToInsert.push({
         id: issue.source.id,
         companyId,
         projectId: issue.targetProjectId,
@@ -2236,6 +2204,12 @@ async function applyMergePlan(input: {
         updatedAt: issue.source.updatedAt,
       });
       insertedIssues += 1;
+    }
+
+    if (issueValuesToInsert.length > 0) {
+      for (let i = 0; i < issueValuesToInsert.length; i += 1000) {
+        await tx.insert(issues).values(issueValuesToInsert.slice(i, i + 1000));
+      }
     }
 
     const commentCandidates = input.plan.commentPlans.filter(
@@ -2384,9 +2358,10 @@ async function applyMergePlan(input: {
             .where(eq(documentRevisions.documentId, documentPlan.source.documentId))
         ).map((row) => row.id),
       );
+      const revisionsToInsert = [];
       for (const revisionPlan of documentPlan.revisionsToInsert) {
         if (existingRevisionIds.has(revisionPlan.source.id)) continue;
-        await tx.insert(documentRevisions).values({
+        revisionsToInsert.push({
           id: revisionPlan.source.id,
           companyId,
           documentId: documentPlan.source.documentId,
@@ -2397,7 +2372,10 @@ async function applyMergePlan(input: {
           createdByUserId: revisionPlan.source.createdByUserId,
           createdAt: revisionPlan.source.createdAt,
         });
-        insertedDocumentRevisions += 1;
+      }
+      if (revisionsToInsert.length > 0) {
+        await tx.insert(documentRevisions).values(revisionsToInsert);
+        insertedDocumentRevisions += revisionsToInsert.length;
       }
     }
 

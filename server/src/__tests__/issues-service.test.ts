@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 60_000 });
 import {
   activityLog,
   agents,
+  applyPendingMigrations,
   companies,
   createDb,
+  ensurePostgresDatabase,
   executionWorkspaces,
   instanceSettings,
   issueComments,
@@ -24,21 +32,85 @@ import { issueService } from "../services/issues.ts";
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
-if (!embeddedPostgresSupport.supported) {
-  console.warn(
-    `Skipping embedded Postgres issue service tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
-  );
+type EmbeddedPostgresInstance = {
+  initialise(): Promise<void>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+};
+
+type EmbeddedPostgresCtor = new (opts: {
+  databaseDir: string;
+  user: string;
+  password: string;
+  port: number;
+  persistent: boolean;
+  initdbFlags?: string[];
+  onLog?: (message: unknown) => void;
+  onError?: (message: unknown) => void;
+}) => EmbeddedPostgresInstance;
+
+async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
+  const mod = await import("embedded-postgres");
+  return mod.default as EmbeddedPostgresCtor;
 }
 
-describeEmbeddedPostgres("issueService.list participantAgentId", () => {
+async function getAvailablePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate test port")));
+        return;
+      }
+      const { port } = address;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function startTempDatabase() {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paperclip-issues-service-"));
+  fs.chmodSync(dataDir, 0o777);
+  const port = await getAvailablePort();
+  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
+  const instance = new EmbeddedPostgres({
+    databaseDir: dataDir,
+    user: "paperclip",
+    password: "paperclip",
+    port,
+    persistent: true,
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    onLog: () => {},
+    onError: () => {},
+  });
+  await instance.initialise();
+  await instance.start();
+
+  const adminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/postgres`;
+  await ensurePostgresDatabase(adminConnectionString, "paperclip");
+  const connectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
+  await applyPendingMigrations(connectionString);
+  return { connectionString, dataDir, instance };
+}
+
+describe("issueService.list participantAgentId", () => {
   let db!: ReturnType<typeof createDb>;
   let svc!: ReturnType<typeof issueService>;
-  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+  let instance: EmbeddedPostgresInstance | null = null;
+  let dataDir = "";
 
   beforeAll(async () => {
-    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issues-service-");
-    db = createDb(tempDb.connectionString);
+    const started = await startTempDatabase();
+    db = createDb(started.connectionString);
     svc = issueService(db);
+    instance = started.instance;
+    dataDir = started.dataDir;
   }, 20_000);
 
   afterEach(async () => {
@@ -55,7 +127,10 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
   });
 
   afterAll(async () => {
-    await tempDb?.cleanup();
+    await instance?.stop();
+    if (dataDir) {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("returns issues an agent participated in across the supported signals", async () => {

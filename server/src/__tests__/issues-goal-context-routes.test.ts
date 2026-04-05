@@ -10,6 +10,7 @@ const mockIssueService = vi.hoisted(() => ({
   findMentionedProjectIds: vi.fn(),
   getCommentCursor: vi.fn(),
   getComment: vi.fn(),
+  findDependentsToWake: vi.fn().mockResolvedValue([]),
 }));
 
 const mockProjectService = vi.hoisted(() => ({

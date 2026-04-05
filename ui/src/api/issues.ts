@@ -79,6 +79,8 @@ export const issuesApi = {
     }),
   release: (id: string) => api.post<Issue>(`/issues/${id}/release`, {}),
   listComments: (id: string) => api.get<IssueComment[]>(`/issues/${id}/comments`),
+  updateComment: (issueId: string, commentId: string, body: string) =>
+    api.patch<IssueComment>(`/issues/${issueId}/comments/${commentId}`, { body }),
   listFeedbackVotes: (id: string) => api.get<FeedbackVote[]>(`/issues/${id}/feedback-votes`),
   listFeedbackTraces: (id: string, filters?: Record<string, string | boolean | undefined>) => {
     const params = new URLSearchParams();

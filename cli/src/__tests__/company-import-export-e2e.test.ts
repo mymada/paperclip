@@ -1,19 +1,37 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  getEmbeddedPostgresTestSupport,
-  startEmbeddedPostgresTestDatabase,
-} from "./helpers/embedded-postgres.js";
 import { createStoredZipArchive } from "./helpers/zip.js";
+
+type EmbeddedPostgresInstance = {
+  initialise(): Promise<void>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+};
+
+type EmbeddedPostgresCtor = new (opts: {
+  databaseDir: string;
+  user: string;
+  password: string;
+  port: number;
+  persistent: boolean;
+  initdbFlags?: string[];
+  onLog?: (message: unknown) => void;
+  onError?: (message: unknown) => void;
+}) => EmbeddedPostgresInstance;
 
 const execFileAsync = promisify(execFile);
 type ServerProcess = ReturnType<typeof spawn>;
+
+async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
+  const mod = await import("embedded-postgres");
+  return mod.default as EmbeddedPostgresCtor;
+}
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -35,13 +53,31 @@ async function getAvailablePort(): Promise<number> {
   });
 }
 
-const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
-const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
+async function startTempDatabase() {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-db-"));
+  chmodSync(dataDir, 0o777);
+  const port = await getAvailablePort();
+  const EmbeddedPostgres = await getEmbeddedPostgresCtor();
+  const instance = new EmbeddedPostgres({
+    databaseDir: dataDir,
+    user: "paperclip",
+    password: "paperclip",
+    port,
+    persistent: true,
+    initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+    onLog: () => {},
+    onError: () => {},
+  });
+  await instance.initialise();
+  await instance.start();
 
-if (!embeddedPostgresSupport.supported) {
-  console.warn(
-    `Skipping embedded Postgres company import/export e2e tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
-  );
+  const { applyPendingMigrations, ensurePostgresDatabase } = await import("@paperclipai/db");
+  const adminConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/postgres`;
+  await ensurePostgresDatabase(adminConnectionString, "paperclip");
+  const connectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
+  await applyPendingMigrations(connectionString);
+
+  return { connectionString, dataDir, instance };
 }
 
 function writeTestConfig(configPath: string, tempRoot: string, port: number, connectionString: string) {
@@ -230,23 +266,26 @@ async function waitForServer(
   );
 }
 
-describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
+describe("paperclipai company import/export e2e", () => {
   let tempRoot = "";
   let configPath = "";
   let exportDir = "";
   let apiBase = "";
   let serverProcess: ServerProcess | null = null;
-  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+  let dbDataDir = "";
+  let dbInstance: EmbeddedPostgresInstance | null = null;
 
   beforeAll(async () => {
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-e2e-"));
     configPath = path.join(tempRoot, "config", "config.json");
     exportDir = path.join(tempRoot, "exported-company");
 
-    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-company-cli-db-");
+    const db = await startTempDatabase();
+    dbDataDir = db.dataDir;
+    dbInstance = db.instance;
 
     const port = await getAvailablePort();
-    writeTestConfig(configPath, tempRoot, port, tempDb.connectionString);
+    writeTestConfig(configPath, tempRoot, port, db.connectionString);
     apiBase = `http://127.0.0.1:${port}`;
 
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -256,7 +295,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       ["paperclipai", "run", "--config", configPath],
       {
         cwd: repoRoot,
-        env: createServerEnv(configPath, port, tempDb.connectionString),
+        env: createServerEnv(configPath, port, db.connectionString),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -273,7 +312,10 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
-    await tempDb?.cleanup();
+    await dbInstance?.stop();
+    if (dbDataDir) {
+      rmSync(dbDataDir, { recursive: true, force: true });
+    }
     if (tempRoot) {
       rmSync(tempRoot, { recursive: true, force: true });
     }

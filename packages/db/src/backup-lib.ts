@@ -1,7 +1,15 @@
-import { createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { createGzip, createGunzip } from "node:zlib";
+import { pipeline, PassThrough } from "node:stream";
+import { promisify } from "node:util";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { once } from "node:events";
 import postgres from "postgres";
+
+const streamPipeline = promisify(pipeline);
 
 export type RunDatabaseBackupOptions = {
   connectionString: string;
@@ -12,12 +20,57 @@ export type RunDatabaseBackupOptions = {
   includeMigrationJournal?: boolean;
   excludeTables?: string[];
   nullifyColumns?: Record<string, string[]>;
+  compression?: boolean;
 };
 
 export type RunDatabaseBackupResult = {
   backupFile: string;
   sizeBytes: number;
   prunedCount: number;
+};
+
+export type GfsOptions = {
+  enabled: boolean;
+  hourlyCount: number;
+  dailyCount: number;
+  weeklyCount: number;
+};
+
+export type BackupIncludeFiles = {
+  skills: boolean;
+  projects: boolean;
+  workspaces: boolean;
+  storage: boolean;
+  secrets: boolean;
+  config: boolean;
+};
+
+export type RunFullBackupOptions = {
+  connectionString: string;
+  backupDir: string;
+  filenamePrefix?: string;
+  connectTimeoutSeconds?: number;
+  compression?: boolean;
+  includeFiles?: Partial<BackupIncludeFiles>;
+  gfs?: GfsOptions;
+  // Paths to instance directories
+  instanceRoot?: string;
+  skillsDir?: string;
+  projectsDir?: string;
+  workspacesDir?: string;
+  storageDir?: string;
+  secretsDir?: string;
+  configFile?: string;
+};
+
+export type RunFullBackupResult = {
+  backupDir: string;
+  dbFile: string;
+  dbSizeBytes: number;
+  filesSizeBytes: number;
+  totalSizeBytes: number;
+  prunedCount: number;
+  includedDirs: string[];
 };
 
 export type RunDatabaseRestoreOptions = {
@@ -77,7 +130,8 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   let pruned = 0;
 
   for (const name of readdirSync(backupDir)) {
-    if (!name.startsWith(`${filenamePrefix}-`) || !name.endsWith(".sql")) continue;
+    if (!name.startsWith(`${filenamePrefix}-`)) continue;
+    if (!name.endsWith(".sql") && !name.endsWith(".sql.gz")) continue;
     const fullPath = resolve(backupDir, name);
     const stat = statSync(fullPath);
     if (stat.mtimeMs < cutoff) {
@@ -87,6 +141,122 @@ function pruneOldBackups(backupDir: string, retentionDays: number, filenamePrefi
   }
 
   return pruned;
+}
+
+function parseBackupTimestamp(name: string, prefix: string): { ts: number; isFull: boolean } | null {
+  // Matches: prefix-full-YYYYMMDD-HHMMSS (dir) or prefix-YYYYMMDD-HHMMSS.sql (standalone file)
+  const re = new RegExp(`^${prefix}-(full-)?(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})(\\d{2})(?:\\.sql(?:\\.gz)?)?$`);
+  const m = name.match(re);
+  if (!m) return null;
+  const [, isFull, year, month, day, hour, min, sec] = m;
+  const ts = new Date(`${year}-${month}-${day}T${hour}:${min}:${sec}Z`).getTime();
+  return { ts, isFull: !!isFull };
+}
+
+function getIsoWeekKey(d: Date): string {
+  const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayOfWeek = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - dayOfWeek);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((tmp.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function pruneFullBackupsGfs(backupDir: string, filenamePrefix: string, gfs: GfsOptions): number {
+  if (!existsSync(backupDir)) return 0;
+
+  type Entry = { name: string; fullPath: string; ts: number };
+  const entries: Entry[] = [];
+
+  for (const name of readdirSync(backupDir)) {
+    const meta = parseBackupTimestamp(name, filenamePrefix);
+    if (meta === null) continue;
+    entries.push({ name, fullPath: resolve(backupDir, name), ts: meta.ts });
+  }
+
+  if (entries.length === 0) return 0;
+
+  // Sort newest first
+  entries.sort((a, b) => b.ts - a.ts);
+
+  const now = Date.now();
+  const toKeep = new Set<string>();
+
+  // Hourly tier: keep all within last hourlyCount hours
+  const hourlyWindowMs = gfs.hourlyCount * 60 * 60 * 1000;
+  for (const e of entries) {
+    if (now - e.ts <= hourlyWindowMs) toKeep.add(e.name);
+  }
+
+  // Daily tier: keep 1 per day for last dailyCount days
+  const dailyWindowMs = gfs.dailyCount * 24 * 60 * 60 * 1000;
+  const seenDays = new Set<string>();
+  for (const e of entries) {
+    if (now - e.ts > dailyWindowMs) continue;
+    const dayKey = new Date(e.ts).toISOString().slice(0, 10);
+    if (!seenDays.has(dayKey)) {
+      seenDays.add(dayKey);
+      toKeep.add(e.name);
+    }
+  }
+
+  // Weekly tier: keep 1 per week for last weeklyCount weeks
+  const weeklyWindowMs = gfs.weeklyCount * 7 * 24 * 60 * 60 * 1000;
+  const seenWeeks = new Set<string>();
+  for (const e of entries) {
+    if (now - e.ts > weeklyWindowMs) continue;
+    const weekKey = getIsoWeekKey(new Date(e.ts));
+    if (!seenWeeks.has(weekKey)) {
+      seenWeeks.add(weekKey);
+      toKeep.add(e.name);
+    }
+  }
+
+  // Delete everything not in toKeep
+  let pruned = 0;
+  for (const e of entries) {
+    if (toKeep.has(e.name)) continue;
+    try {
+      const stat = statSync(e.fullPath);
+      if (stat.isDirectory()) {
+        rmSync(e.fullPath, { recursive: true, force: true });
+      } else {
+        unlinkSync(e.fullPath);
+      }
+      pruned++;
+    } catch {
+      // ignore prune errors
+    }
+  }
+
+  return pruned;
+}
+
+async function copyDirIfExists(src: string, dest: string): Promise<number> {
+  if (!src || !existsSync(src)) return 0;
+  const entries = readdirSync(src);
+  if (entries.length === 0) return 0;
+  await cp(src, dest, { recursive: true });
+  // Return approximate size
+  try {
+    return statSync(dest).size;
+  } catch {
+    return 0;
+  }
+}
+
+function dirSizeSync(dirPath: string): number {
+  if (!existsSync(dirPath)) return 0;
+  let total = 0;
+  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+    const child = resolve(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      total += dirSizeSync(child);
+    } else {
+      try { total += statSync(child).size; } catch { /* ignore */ }
+    }
+  }
+  return total;
 }
 
 function formatBackupSize(sizeBytes: number): string {
@@ -99,7 +269,7 @@ function formatSqlLiteral(value: string): string {
   const sanitized = value.replace(/\u0000/g, "");
   let tag = "$paperclip$";
   while (sanitized.includes(tag)) {
-    tag = `$paperclip_${Math.random().toString(36).slice(2, 8)}$`;
+    tag = `$paperclip_${randomBytes(4).toString("hex")}$`;
   }
   return `${tag}${sanitized}${tag}`;
 }
@@ -142,8 +312,14 @@ function tableKey(schemaName: string, tableName: string): string {
   return `${schemaName}.${tableName}`;
 }
 
-export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes = DEFAULT_BACKUP_WRITE_BUFFER_BYTES) {
-  const stream = createWriteStream(filePath, { encoding: "utf8" });
+export function createBufferedTextFileWriter(filePath: string, useCompression = false, maxBufferedBytes = DEFAULT_BACKUP_WRITE_BUFFER_BYTES) {
+  const finalFile = useCompression ? `${filePath}.gz` : filePath;
+  const writeStream = createWriteStream(finalFile);
+  const outputStream = useCompression ? createGzip({ level: 6 }) : new PassThrough();
+
+  // Connect the pipeline: outputStream -> writeStream
+  outputStream.pipe(writeStream);
+
   const flushThreshold = Math.max(1, Math.trunc(maxBufferedBytes));
   let bufferedLines: string[] = [];
   let bufferedBytes = 0;
@@ -152,13 +328,13 @@ export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes 
   let streamError: Error | null = null;
   let pendingWrite = Promise.resolve();
 
-  stream.on("error", (error) => {
+  outputStream.on("error", (error) => {
     streamError = error;
   });
 
   const writeChunk = async (chunk: string): Promise<void> => {
     if (streamError) throw streamError;
-    const canContinue = stream.write(chunk);
+    const canContinue = outputStream.write(chunk);
     if (!canContinue) {
       await new Promise<void>((resolve, reject) => {
         const handleDrain = () => {
@@ -170,11 +346,11 @@ export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes 
           reject(error);
         };
         const cleanup = () => {
-          stream.off("drain", handleDrain);
-          stream.off("error", handleError);
+          outputStream.off("drain", handleDrain);
+          outputStream.off("error", handleError);
         };
-        stream.once("drain", handleDrain);
-        stream.once("error", handleError);
+        outputStream.once("drain", handleDrain);
+        outputStream.once("error", handleError);
       });
     }
     if (streamError) throw streamError;
@@ -192,9 +368,10 @@ export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes 
   };
 
   return {
+    filePath: finalFile,
     emit(line: string) {
       if (closed) {
-        throw new Error(`Cannot write to closed backup file: ${filePath}`);
+        throw new Error(`Cannot write to closed backup file: ${finalFile}`);
       }
       if (streamError) throw streamError;
       bufferedLines.push(line);
@@ -213,9 +390,12 @@ export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes 
           reject(streamError);
           return;
         }
-        stream.end((error?: Error | null) => {
+        outputStream.end((error?: Error | null) => {
           if (error) reject(error);
-          else resolve();
+          else {
+            writeStream.on("finish", resolve);
+            writeStream.on("error", reject);
+          }
         });
       });
       if (streamError) throw streamError;
@@ -225,11 +405,12 @@ export function createBufferedTextFileWriter(filePath: string, maxBufferedBytes 
       closed = true;
       bufferedLines = [];
       bufferedBytes = 0;
-      stream.destroy();
+      outputStream.destroy();
+      writeStream.destroy();
       await pendingWrite.catch(() => {});
-      if (existsSync(filePath)) {
+      if (existsSync(finalFile)) {
         try {
-          unlinkSync(filePath);
+          unlinkSync(finalFile);
         } catch {
           // Preserve the original backup failure if temporary file cleanup also fails.
         }
@@ -245,10 +426,13 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   const includeMigrationJournal = opts.includeMigrationJournal === true;
   const excludedTableNames = normalizeTableNameSet(opts.excludeTables);
   const nullifiedColumnsByTable = normalizeNullifyColumnMap(opts.nullifyColumns);
+  
   const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
   mkdirSync(opts.backupDir, { recursive: true });
+  const useCompression = opts.compression !== false;
   const backupFile = resolve(opts.backupDir, `${filenamePrefix}-${timestamp()}.sql`);
-  const writer = createBufferedTextFileWriter(backupFile);
+  const writer = createBufferedTextFileWriter(backupFile, useCompression);
+  const finalFile = writer.filePath;
 
   try {
     await sql`SELECT 1`;
@@ -296,9 +480,9 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
 
     for (const e of enums) {
       const labels = e.labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(", ");
-      emitStatement(`CREATE TYPE "public"."${e.typname}" AS ENUM (${labels});`);
+      await emitStatement(`CREATE TYPE "public"."${e.typname}" AS ENUM (${labels});`);
     }
-    if (enums.length > 0) emit("");
+    if (enums.length > 0) await emit("");
 
     const allSequences = await sql<SequenceDefinition[]>`
       SELECT
@@ -333,23 +517,23 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     for (const seq of sequences) schemas.add(seq.sequence_schema);
     const extraSchemas = [...schemas].filter((schemaName) => schemaName !== "public");
     if (extraSchemas.length > 0) {
-      emit("-- Schemas");
+      await emit("-- Schemas");
       for (const schemaName of extraSchemas) {
-        emitStatement(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schemaName)};`);
+        await emitStatement(`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schemaName)};`);
       }
-      emit("");
+      await emit("");
     }
 
     if (sequences.length > 0) {
-      emit("-- Sequences");
+      await emit("-- Sequences");
       for (const seq of sequences) {
         const qualifiedSequenceName = quoteQualifiedName(seq.sequence_schema, seq.sequence_name);
-        emitStatement(`DROP SEQUENCE IF EXISTS ${qualifiedSequenceName} CASCADE;`);
-        emitStatement(
+        await emitStatement(`DROP SEQUENCE IF EXISTS ${qualifiedSequenceName} CASCADE;`);
+        await emitStatement(
           `CREATE SEQUENCE ${qualifiedSequenceName} AS ${seq.data_type} INCREMENT BY ${seq.increment} MINVALUE ${seq.minimum_value} MAXVALUE ${seq.maximum_value} START WITH ${seq.start_value}${seq.cycle_option === "YES" ? " CYCLE" : " NO CYCLE"};`,
         );
       }
-      emit("");
+      await emit("");
     }
 
     // Get full CREATE TABLE DDL via column info
@@ -372,8 +556,8 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
         ORDER BY ordinal_position
       `;
 
-      emit(`-- Table: ${schema_name}.${tablename}`);
-      emitStatement(`DROP TABLE IF EXISTS ${qualifiedTableName} CASCADE;`);
+      await emit(`-- Table: ${schema_name}.${tablename}`);
+      await emitStatement(`DROP TABLE IF EXISTS ${qualifiedTableName} CASCADE;`);
 
       const colDefs: string[] = [];
       for (const col of columns) {
@@ -417,22 +601,22 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
         colDefs.push(`  CONSTRAINT "${p.constraint_name}" PRIMARY KEY (${cols})`);
       }
 
-      emit(`CREATE TABLE ${qualifiedTableName} (`);
-      emit(colDefs.join(",\n"));
-      emit(");");
-      emitStatementBoundary();
-      emit("");
+      await emit(`CREATE TABLE ${qualifiedTableName} (`);
+      await emit(colDefs.join(",\n"));
+      await emit(");");
+      await emit(STATEMENT_BREAKPOINT);
+      await emit("");
     }
 
     const ownedSequences = sequences.filter((seq) => seq.owner_table && seq.owner_column);
     if (ownedSequences.length > 0) {
-      emit("-- Sequence ownership");
+      await emit("-- Sequence ownership");
       for (const seq of ownedSequences) {
-        emitStatement(
+        await emitStatement(
           `ALTER SEQUENCE ${quoteQualifiedName(seq.sequence_schema, seq.sequence_name)} OWNED BY ${quoteQualifiedName(seq.owner_schema ?? "public", seq.owner_table!)}.${quoteIdentifier(seq.owner_column!)};`,
         );
       }
-      emit("");
+      await emit("");
     }
 
     // Foreign keys (after all tables created)
@@ -477,15 +661,15 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     );
 
     if (fks.length > 0) {
-      emit("-- Foreign keys");
+      await emit("-- Foreign keys");
       for (const fk of fks) {
         const srcCols = fk.source_columns.map((c) => `"${c}"`).join(", ");
         const tgtCols = fk.target_columns.map((c) => `"${c}"`).join(", ");
-        emitStatement(
+        await emitStatement(
           `ALTER TABLE ${quoteQualifiedName(fk.source_schema, fk.source_table)} ADD CONSTRAINT "${fk.constraint_name}" FOREIGN KEY (${srcCols}) REFERENCES ${quoteQualifiedName(fk.target_schema, fk.target_table)} (${tgtCols}) ON UPDATE ${fk.update_rule} ON DELETE ${fk.delete_rule};`,
         );
       }
-      emit("");
+      await emit("");
     }
 
     // Unique constraints
@@ -513,12 +697,12 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     const uniques = allUniqueConstraints.filter((entry) => includedTableNames.has(tableKey(entry.schema_name, entry.tablename)));
 
     if (uniques.length > 0) {
-      emit("-- Unique constraints");
+      await emit("-- Unique constraints");
       for (const u of uniques) {
         const cols = u.column_names.map((c) => `"${c}"`).join(", ");
-        emitStatement(`ALTER TABLE ${quoteQualifiedName(u.schema_name, u.tablename)} ADD CONSTRAINT "${u.constraint_name}" UNIQUE (${cols});`);
+        await emitStatement(`ALTER TABLE ${quoteQualifiedName(u.schema_name, u.tablename)} ADD CONSTRAINT "${u.constraint_name}" UNIQUE (${cols});`);
       }
-      emit("");
+      await emit("");
     }
 
     // Indexes (non-primary, non-unique-constraint)
@@ -539,20 +723,22 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     const indexes = allIndexes.filter((entry) => includedTableNames.has(tableKey(entry.schema_name, entry.tablename)));
 
     if (indexes.length > 0) {
-      emit("-- Indexes");
+      await emit("-- Indexes");
       for (const idx of indexes) {
-        emitStatement(`${idx.indexdef};`);
+        await emitStatement(`${idx.indexdef};`);
       }
-      emit("");
+      await emit("");
     }
 
-    // Dump data for each table
+    // Dump data for each table (Streaming via Cursors)
     for (const { schema_name, tablename } of tables) {
       const qualifiedTableName = quoteQualifiedName(schema_name, tablename);
-      const count = await sql.unsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM ${qualifiedTableName}`);
-      if (excludedTableNames.has(tablename) || (count[0]?.n ?? 0) === 0) continue;
+      if (excludedTableNames.has(tablename)) continue;
 
-      // Get column info for this table
+      const countResult = await sql.unsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM ${qualifiedTableName}`);
+      const count = countResult[0]?.n ?? 0;
+      if (count === 0) continue;
+
       const cols = await sql<{ column_name: string; data_type: string }[]>`
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -561,29 +747,34 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       `;
       const colNames = cols.map((c) => `"${c.column_name}"`).join(", ");
 
-      emit(`-- Data for: ${schema_name}.${tablename} (${count[0]!.n} rows)`);
+      await emit(`-- Data for: ${schema_name}.${tablename} (${count} rows)`);
 
-      const rows = await sql.unsafe(`SELECT * FROM ${qualifiedTableName}`).values();
       const nullifiedColumns = nullifiedColumnsByTable.get(tablename) ?? new Set<string>();
-      for (const row of rows) {
-        const values = row.map((rawValue: unknown, index) => {
-          const columnName = cols[index]?.column_name;
-          const val = columnName && nullifiedColumns.has(columnName) ? null : rawValue;
-          if (val === null || val === undefined) return "NULL";
-          if (typeof val === "boolean") return val ? "true" : "false";
-          if (typeof val === "number") return String(val);
-          if (val instanceof Date) return formatSqlLiteral(val.toISOString());
-          if (typeof val === "object") return formatSqlLiteral(JSON.stringify(val));
-          return formatSqlLiteral(String(val));
-        });
-        emitStatement(`INSERT INTO ${qualifiedTableName} (${colNames}) VALUES (${values.join(", ")});`);
+      
+      // Use cursor to fetch rows in batches
+      const cursor = sql.unsafe(`SELECT * FROM ${qualifiedTableName}`).cursor(500);
+      for await (const rows of cursor) {
+        for (const row of rows) {
+          const rowObj = row as Record<string, unknown>;
+          const values = cols.map((col) => {
+            const rawValue = rowObj[col.column_name];
+            const val = nullifiedColumns.has(col.column_name) ? null : rawValue;
+            if (val === null || val === undefined) return "NULL";
+            if (typeof val === "boolean") return val ? "true" : "false";
+            if (typeof val === "number") return String(val);
+            if (val instanceof Date) return formatSqlLiteral(val.toISOString());
+            if (typeof val === "object") return formatSqlLiteral(JSON.stringify(val));
+            return formatSqlLiteral(String(val));
+          });
+          await emitStatement(`INSERT INTO ${qualifiedTableName} (${colNames}) VALUES (${values.join(", ")});`);
+        }
       }
-      emit("");
+      await emit("");
     }
 
     // Sequence values
     if (sequences.length > 0) {
-      emit("-- Sequence values");
+      await emit("-- Sequence values");
       for (const seq of sequences) {
         const qualifiedSequenceName = quoteQualifiedName(seq.sequence_schema, seq.sequence_name);
         const val = await sql.unsafe<{ last_value: string; is_called: boolean }[]>(
@@ -593,22 +784,22 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
           seq.owner_table !== null
             && excludedTableNames.has(seq.owner_table);
         if (val[0] && !skipSequenceValue) {
-          emitStatement(`SELECT setval('${qualifiedSequenceName.replaceAll("'", "''")}', ${val[0].last_value}, ${val[0].is_called ? "true" : "false"});`);
+          await emitStatement(`SELECT setval('${qualifiedSequenceName.replaceAll("'", "''")}', ${val[0].last_value}, ${val[0].is_called ? "true" : "false"});`);
         }
       }
-      emit("");
+      await emit("");
     }
 
-    emitStatement("COMMIT;");
-    emit("");
+    await emitStatement("COMMIT;");
+    await emit("");
 
     await writer.close();
 
-    const sizeBytes = statSync(backupFile).size;
+    const sizeBytes = statSync(finalFile).size;
     const prunedCount = pruneOldBackups(opts.backupDir, retentionDays, filenamePrefix);
 
     return {
-      backupFile,
+      backupFile: finalFile,
       sizeBytes,
       prunedCount,
     };
@@ -620,31 +811,133 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
   }
 }
 
+export async function runFullBackup(opts: RunFullBackupOptions): Promise<RunFullBackupResult> {
+  const filenamePrefix = opts.filenamePrefix ?? "paperclip";
+  const useCompression = opts.compression !== false;
+  const include: BackupIncludeFiles = {
+    skills: opts.includeFiles?.skills !== false,
+    projects: opts.includeFiles?.projects !== false,
+    workspaces: opts.includeFiles?.workspaces !== false,
+    storage: opts.includeFiles?.storage !== false,
+    secrets: opts.includeFiles?.secrets !== false,
+    config: opts.includeFiles?.config !== false,
+  };
+  const gfs: GfsOptions = opts.gfs ?? { enabled: true, hourlyCount: 24, dailyCount: 7, weeklyCount: 4 };
+
+  const ts = timestamp();
+  const backupEntryName = `${filenamePrefix}-full-${ts}`;
+  const backupEntryPath = resolve(opts.backupDir, backupEntryName);
+
+  mkdirSync(backupEntryPath, { recursive: true });
+
+  // 1. DB dump
+  const dbResult = await runDatabaseBackup({
+    connectionString: opts.connectionString,
+    backupDir: backupEntryPath,
+    retentionDays: 9999, // No pruning inside the entry — GFS handles it at the top level
+    filenamePrefix: "db",
+    connectTimeoutSeconds: opts.connectTimeoutSeconds,
+    compression: useCompression,
+  });
+
+  const includedDirs: string[] = ["db"];
+
+  // 2. Copy instance file directories
+  const dirsToInclude: Array<{ key: keyof BackupIncludeFiles; src: string | undefined; dest: string }> = [
+    { key: "skills", src: opts.skillsDir, dest: resolve(backupEntryPath, "skills") },
+    { key: "projects", src: opts.projectsDir, dest: resolve(backupEntryPath, "projects") },
+    { key: "workspaces", src: opts.workspacesDir, dest: resolve(backupEntryPath, "workspaces") },
+    { key: "storage", src: opts.storageDir, dest: resolve(backupEntryPath, "storage") },
+    { key: "secrets", src: opts.secretsDir, dest: resolve(backupEntryPath, "secrets") },
+  ];
+
+  let filesSizeBytes = 0;
+  for (const { key, src, dest } of dirsToInclude) {
+    if (!include[key] || !src) continue;
+    await copyDirIfExists(src, dest);
+    const sz = dirSizeSync(dest);
+    if (sz > 0) {
+      filesSizeBytes += sz;
+      includedDirs.push(key);
+    }
+  }
+
+  // 3. Copy config.json
+  if (include.config && opts.configFile && existsSync(opts.configFile)) {
+    const destConfig = resolve(backupEntryPath, "config.json");
+    await cp(opts.configFile, destConfig);
+    includedDirs.push("config.json");
+  }
+
+  // 4. Write manifest
+  const manifest = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    instanceRoot: opts.instanceRoot ?? "",
+    compression: useCompression,
+    included: includedDirs,
+    dbFile: useCompression ? "db.sql.gz" : "db.sql",
+  };
+  await writeFile(resolve(backupEntryPath, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+
+  const totalSizeBytes = dbResult.sizeBytes + filesSizeBytes;
+
+  // 5. GFS rotation — prune old full backups
+  const prunedCount = gfs.enabled
+    ? pruneFullBackupsGfs(opts.backupDir, filenamePrefix, gfs)
+    : 0;
+
+  return {
+    backupDir: backupEntryPath,
+    dbFile: dbResult.backupFile,
+    dbSizeBytes: dbResult.sizeBytes,
+    filesSizeBytes,
+    totalSizeBytes,
+    prunedCount,
+    includedDirs,
+  };
+}
+
 export async function runDatabaseRestore(opts: RunDatabaseRestoreOptions): Promise<void> {
   const connectTimeout = Math.max(1, Math.trunc(opts.connectTimeoutSeconds ?? 5));
   const sql = postgres(opts.connectionString, { max: 1, connect_timeout: connectTimeout });
 
   try {
     await sql`SELECT 1`;
-    const contents = await readFile(opts.backupFile, "utf8");
-    const statements = contents
-      .split(STATEMENT_BREAKPOINT)
-      .map((statement) => statement.trim())
-      .filter((statement) => statement.length > 0);
+    
+    const fileStream = createReadStream(opts.backupFile);
+    const decompressionStream = opts.backupFile.endsWith(".gz") ? createGunzip() : new PassThrough();
+    
+    const rl = createInterface({
+      input: fileStream.pipe(decompressionStream),
+      terminal: false,
+    });
 
-    for (const statement of statements) {
-      await sql.unsafe(statement).execute();
+    let currentStatement = "";
+    for await (const line of rl) {
+      if (line.includes(STATEMENT_BREAKPOINT)) {
+        const trimmed = currentStatement.trim();
+        if (trimmed) {
+          try {
+            await sql.unsafe(trimmed).execute();
+          } catch (error) {
+            throw new Error(`Restore failed at statement: ${trimmed.slice(0, 100)}... Error: ${sanitizeRestoreErrorMessage(error)}`);
+          }
+        }
+        currentStatement = "";
+      } else {
+        currentStatement += line + "\n";
+      }
     }
+
+    // Final statement if any
+    const finalTrimmed = currentStatement.trim();
+    if (finalTrimmed) {
+      await sql.unsafe(finalTrimmed).execute();
+    }
+
   } catch (error) {
-    const statementPreview = typeof error === "object" && error !== null && typeof (error as Record<string, unknown>).query === "string"
-      ? String((error as Record<string, unknown>).query)
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.length > 0 && !line.startsWith("--"))
-      : null;
-    throw new Error(
-      `Failed to restore ${basename(opts.backupFile)}: ${sanitizeRestoreErrorMessage(error)}${statementPreview ? ` [statement: ${statementPreview.slice(0, 120)}]` : ""}`,
-    );
+    throw new Error(`Failed to restore ${basename(opts.backupFile)}: ${sanitizeRestoreErrorMessage(error)}`);
   } finally {
     await sql.end();
   }
@@ -654,4 +947,28 @@ export function formatDatabaseBackupResult(result: RunDatabaseBackupResult): str
   const size = formatBackupSize(result.sizeBytes);
   const pruned = result.prunedCount > 0 ? `; pruned ${result.prunedCount} old backup(s)` : "";
   return `${result.backupFile} (${size}${pruned})`;
+}
+
+export function formatFullBackupResult(result: RunFullBackupResult): string {
+  const dbSize = formatBackupSize(result.dbSizeBytes);
+  const filesSize = formatBackupSize(result.filesSizeBytes);
+  const totalSize = formatBackupSize(result.totalSizeBytes);
+  const pruned = result.prunedCount > 0 ? `; pruned ${result.prunedCount} old backup(s)` : "";
+  return `${result.backupDir} (db: ${dbSize}, files: ${filesSize}, total: ${totalSize}${pruned})`;
+}
+
+export function listFullBackups(backupDir: string, filenamePrefix = "paperclip"): Array<{ name: string; path: string; createdAt: Date; sizeBytes: number }> {
+  if (!existsSync(backupDir)) return [];
+  const results: Array<{ name: string; path: string; createdAt: Date; sizeBytes: number }> = [];
+  for (const name of readdirSync(backupDir)) {
+    const meta = parseBackupTimestamp(name, filenamePrefix);
+    if (!meta || !meta.isFull) continue;
+    const fullPath = resolve(backupDir, name);
+    try {
+      if (!statSync(fullPath).isDirectory()) continue;
+      const sizeBytes = dirSizeSync(fullPath);
+      results.push({ name, path: fullPath, createdAt: new Date(meta.ts), sizeBytes });
+    } catch { /* ignore */ }
+  }
+  return results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }

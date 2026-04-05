@@ -44,6 +44,9 @@ feedback-export-*
 # Doc maintenance cursor
 .doc-review-cursor
 
+# Logs
+*.log
+
 # Playwright
 tests/e2e/test-results/
 tests/e2e/playwright-report/

@@ -119,10 +119,10 @@ pnpm paperclipai agent get <agent-id>
 pnpm paperclipai agent local-cli <agent-id-or-shortname> --company-id <company-id>
 ```
 
-`agent local-cli` is the quickest way to run local Claude/Codex manually as a Paperclip agent:
+`agent local-cli` is the quickest way to run local Claude/Codex/Gemini manually as a Paperclip agent:
 
 - creates a new long-lived agent API key
-- installs missing Paperclip skills into `~/.codex/skills` and `~/.claude/skills`
+- installs missing Paperclip skills into `~/.codex/skills`, `~/.claude/skills`, and `~/.gemini/skills`
 - prints `export ...` lines for `PAPERCLIP_API_URL`, `PAPERCLIP_COMPANY_ID`, `PAPERCLIP_AGENT_ID`, and `PAPERCLIP_API_KEY`
 
 Example for shortname-based local setup:
@@ -130,7 +130,10 @@ Example for shortname-based local setup:
 ```sh
 pnpm paperclipai agent local-cli codexcoder --company-id <company-id>
 pnpm paperclipai agent local-cli claudecoder --company-id <company-id>
+pnpm paperclipai agent local-cli geminicoder --company-id <company-id>
 ```
+
+Note: You can override the tool home directories using `CLAUDE_HOME`, `CODEX_HOME`, `GEMINI_CLI_HOME` (or `GEMINI_HOME`) environment variables before running the setup.
 
 ## Approval Commands
 

@@ -18,18 +18,49 @@ export const llmConfigSchema = z.object({
   apiKey: z.string().optional(),
 });
 
+export const backupIncludeFilesConfigSchema = z.object({
+  skills: z.boolean().default(true),
+  projects: z.boolean().default(true),
+  workspaces: z.boolean().default(true),
+  storage: z.boolean().default(true),
+  secrets: z.boolean().default(true),
+  config: z.boolean().default(true),
+});
+
+export const backupGfsConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  hourlyCount: z.number().int().min(0).max(24).default(24),
+  dailyCount: z.number().int().min(0).max(31).default(7),
+  weeklyCount: z.number().int().min(0).max(52).default(4),
+});
+
 export const databaseBackupConfigSchema = z.object({
   enabled: z.boolean().default(true),
   intervalMinutes: z.number().int().min(1).max(7 * 24 * 60).default(60),
   retentionDays: z.number().int().min(1).max(3650).default(30),
   dir: z.string().default("~/.paperclip/instances/default/data/backups"),
+  compression: z.boolean().default(true),
+  includeFiles: backupIncludeFilesConfigSchema.default({
+    skills: true,
+    projects: true,
+    workspaces: true,
+    storage: true,
+    secrets: true,
+    config: true,
+  }),
+  gfs: backupGfsConfigSchema.default({
+    enabled: true,
+    hourlyCount: 24,
+    dailyCount: 7,
+    weeklyCount: 4,
+  }),
 });
 
 export const databaseConfigSchema = z.object({
   mode: z.enum(["embedded-postgres", "postgres"]).default("embedded-postgres"),
   connectionString: z.string().optional(),
   embeddedPostgresDataDir: z.string().default("~/.paperclip/instances/default/db"),
-  embeddedPostgresPort: z.number().int().min(1).max(65535).default(54329),
+  embeddedPostgresPort: z.number().int().min(1).max(65535).default(54330),
   backup: databaseBackupConfigSchema.default({
     enabled: true,
     intervalMinutes: 60,
@@ -182,3 +213,5 @@ export type AuthConfig = z.infer<typeof authConfigSchema>;
 export type TelemetryConfig = z.infer<typeof telemetryConfigSchema>;
 export type ConfigMeta = z.infer<typeof configMetaSchema>;
 export type DatabaseBackupConfig = z.infer<typeof databaseBackupConfigSchema>;
+export type BackupIncludeFilesConfig = z.infer<typeof backupIncludeFilesConfigSchema>;
+export type BackupGfsConfig = z.infer<typeof backupGfsConfigSchema>;

@@ -103,7 +103,7 @@ function buildCliAuthApprovalPath(challengeId: string, token: string) {
   return `/cli-auth/${challengeId}?token=${encodeURIComponent(token)}`;
 }
 
-function readSkillMarkdown(skillName: string): string | null {
+async function readSkillMarkdown(skillName: string): Promise<string | null> {
   const normalized = skillName.trim().toLowerCase();
   if (
     normalized !== "paperclip" &&
@@ -120,7 +120,7 @@ function readSkillMarkdown(skillName: string): string | null {
   ];
   for (const skillPath of candidates) {
     try {
-      return fs.readFileSync(skillPath, "utf8");
+      return await fs.promises.readFile(skillPath, "utf8");
     } catch {
       // Continue to next candidate.
     }
@@ -129,7 +129,7 @@ function readSkillMarkdown(skillName: string): string | null {
 }
 
 /** Resolve the Paperclip repo skills directory (built-in / managed skills). */
-function resolvePaperclipSkillsDir(): string | null {
+async function resolvePaperclipSkillsDir(): Promise<string | null> {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
     path.resolve(moduleDir, "../../skills"),         // published
@@ -138,7 +138,8 @@ function resolvePaperclipSkillsDir(): string | null {
   ];
   for (const candidate of candidates) {
     try {
-      if (fs.statSync(candidate).isDirectory()) return candidate;
+      const stats = await fs.promises.stat(candidate);
+      if (stats.isDirectory()) return candidate;
     } catch { /* skip */ }
   }
   return null;
@@ -172,44 +173,49 @@ interface AvailableSkill {
 }
 
 /** Discover all available Claude Code skills from ~/.claude/skills/. */
-function listAvailableSkills(): AvailableSkill[] {
+async function listAvailableSkills(): Promise<AvailableSkill[]> {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const claudeSkillsDir = path.join(homeDir, ".claude", "skills");
-  const paperclipSkillsDir = resolvePaperclipSkillsDir();
+  const paperclipSkillsDir = await resolvePaperclipSkillsDir();
 
   // Build set of Paperclip-managed skill names
   const paperclipSkillNames = new Set<string>();
   if (paperclipSkillsDir) {
     try {
-      for (const entry of fs.readdirSync(paperclipSkillsDir, { withFileTypes: true })) {
+      const entries = await fs.promises.readdir(paperclipSkillsDir, { withFileTypes: true });
+      for (const entry of entries) {
         if (entry.isDirectory()) paperclipSkillNames.add(entry.name);
       }
     } catch { /* skip */ }
   }
 
-  const skills: AvailableSkill[] = [];
-
   try {
-    const entries = fs.readdirSync(claudeSkillsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      if (entry.name.startsWith(".")) continue;
-      const skillMdPath = path.join(claudeSkillsDir, entry.name, "SKILL.md");
-      let description = "";
-      try {
-        const md = fs.readFileSync(skillMdPath, "utf8");
-        description = parseSkillFrontmatter(md).description;
-      } catch { /* no SKILL.md or unreadable */ }
-      skills.push({
-        name: entry.name,
-        description,
-        isPaperclipManaged: paperclipSkillNames.has(entry.name),
-      });
-    }
-  } catch { /* ~/.claude/skills/ doesn't exist */ }
+    const entries = await fs.promises.readdir(claudeSkillsDir, { withFileTypes: true });
+    const skills = await Promise.all(
+      entries.map(async (entry) => {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) return null;
+        if (entry.name.startsWith(".")) return null;
+        const skillMdPath = path.join(claudeSkillsDir, entry.name, "SKILL.md");
+        let description = "";
+        try {
+          const md = await fs.promises.readFile(skillMdPath, "utf8");
+          description = parseSkillFrontmatter(md).description;
+        } catch { /* no SKILL.md or unreadable */ }
+        return {
+          name: entry.name,
+          description,
+          isPaperclipManaged: paperclipSkillNames.has(entry.name),
+        };
+      }),
+    );
 
-  skills.sort((a, b) => a.name.localeCompare(b.name));
-  return skills;
+    const filtered = skills.filter((s): s is AvailableSkill => s !== null);
+    filtered.sort((a, b) => a.name.localeCompare(b.name));
+    return filtered;
+  } catch {
+    /* ~/.claude/skills/ doesn't exist */
+    return [];
+  }
 }
 
 function toJoinRequestResponse(row: typeof joinRequests.$inferSelect) {
@@ -1906,8 +1912,12 @@ export function accessRoutes(
     return company?.name ?? null;
   }
 
-  router.get("/skills/available", (_req, res) => {
-    res.json({ skills: listAvailableSkills() });
+  router.get("/skills/available", async (_req, res, next) => {
+    try {
+      res.json({ skills: await listAvailableSkills() });
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.get("/skills/index", (_req, res) => {
@@ -1926,11 +1936,15 @@ export function accessRoutes(
     });
   });
 
-  router.get("/skills/:skillName", (req, res) => {
-    const skillName = (req.params.skillName as string).trim().toLowerCase();
-    const markdown = readSkillMarkdown(skillName);
-    if (!markdown) throw notFound("Skill not found");
-    res.type("text/markdown").send(markdown);
+  router.get("/skills/:skillName", async (req, res, next) => {
+    try {
+      const skillName = (req.params.skillName as string).trim().toLowerCase();
+      const markdown = await readSkillMarkdown(skillName);
+      if (!markdown) throw notFound("Skill not found");
+      res.type("text/markdown").send(markdown);
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.post(

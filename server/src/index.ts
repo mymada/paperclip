@@ -10,14 +10,13 @@ import { and, eq } from "drizzle-orm";
 import {
   createDb,
   ensurePostgresDatabase,
-  formatEmbeddedPostgresError,
   getPostgresDataDirectory,
   inspectMigrations,
   applyPendingMigrations,
-  createEmbeddedPostgresLogBuffer,
   reconcilePendingMigrationHistory,
   formatDatabaseBackupResult,
   runDatabaseBackup,
+  runFullBackup,
   authUsers,
   companies,
   companyMemberships,
@@ -31,6 +30,7 @@ import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import {
   feedbackService,
   heartbeatService,
+  mcpBridgeService,
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
 } from "./services/index.js";
@@ -38,6 +38,7 @@ import { createFeedbackTraceShareClientFromConfig } from "./services/feedback-sh
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
+import { resolvePaperclipInstanceRoot } from "./home-paths.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 
@@ -69,6 +70,38 @@ type EmbeddedPostgresCtor = new (opts: {
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
 
+export interface BackupConfigSnapshot {
+  enabled: boolean;
+  intervalMinutes: number;
+  retentionDays: number;
+  backupDir: string;
+  compression: boolean;
+  gfsEnabled: boolean;
+  gfsHourlyCount: number;
+  gfsDailyCount: number;
+  gfsWeeklyCount: number;
+}
+
+export interface BackupLastResult {
+  completedAt: Date;
+  backupDir: string;
+  dbSizeBytes: number;
+  filesSizeBytes: number;
+  totalSizeBytes: number;
+  prunedCount: number;
+  includedDirs: string[];
+}
+
+export interface BackupLastError {
+  message: string;
+  occurredAt: Date;
+}
+
+export interface BackupSchedulerState {
+  intervalMs: number;
+  isInFlight(): boolean;
+  runNow(): Promise<void>;
+}
 
 export interface StartedServer {
   server: ReturnType<typeof createServer>;
@@ -105,8 +138,8 @@ export async function startServer(): Promise<StartedServer> {
   }
   
   async function promptApplyMigrations(migrations: string[]): Promise<boolean> {
-    if (process.env.PAPERCLIP_MIGRATION_AUTO_APPLY === "true") return true;
     if (process.env.PAPERCLIP_MIGRATION_PROMPT === "never") return false;
+    if (process.env.PAPERCLIP_MIGRATION_AUTO_APPLY === "true") return true;
     if (!stdin.isTTY || !stdout.isTTY) return true;
   
     const prompt = createInterface({ input: stdin, output: stdout });
@@ -178,18 +211,6 @@ export async function startServer(): Promise<StartedServer> {
     const normalized = host.trim().toLowerCase();
     return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
   }
-
-  function rewriteLocalUrlPort(rawUrl: string | undefined, port: number): string | undefined {
-    if (!rawUrl) return undefined;
-    try {
-      const parsed = new URL(rawUrl);
-      if (!isLoopbackHost(parsed.hostname)) return rawUrl;
-      parsed.port = String(port);
-      return parsed.toString();
-    } catch {
-      return rawUrl;
-    }
-  }
   
   const LOCAL_BOARD_USER_ID = "local-board";
   const LOCAL_BOARD_USER_EMAIL = "local@paperclip.local";
@@ -251,12 +272,15 @@ export async function startServer(): Promise<StartedServer> {
     }
   }
   
+  let lastBackupResult: BackupLastResult | null = null;
+  let lastBackupError: BackupLastError | null = null;
+  let backupSchedulerState: BackupSchedulerState | null = null;
+
   let db;
   let embeddedPostgres: EmbeddedPostgresInstance | null = null;
   let embeddedPostgresStartedByThisProcess = false;
   let migrationSummary: MigrationSummary = "skipped";
   let activeDatabaseConnectionString: string;
-  let resolvedEmbeddedPostgresPort: number | null = null;
   let startupDbInfo:
     | { mode: "external-postgres"; connectionString: string }
     | { mode: "embedded-postgres"; dataDir: string; port: number };
@@ -282,31 +306,29 @@ export async function startServer(): Promise<StartedServer> {
     const dataDir = resolve(config.embeddedPostgresDataDir);
     const configuredPort = config.embeddedPostgresPort;
     let port = configuredPort;
-    const logBuffer = createEmbeddedPostgresLogBuffer(120);
+    const embeddedPostgresLogBuffer: string[] = [];
+    const EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT = 120;
     const verboseEmbeddedPostgresLogs = process.env.PAPERCLIP_EMBEDDED_POSTGRES_VERBOSE === "true";
     const appendEmbeddedPostgresLog = (message: unknown) => {
-      logBuffer.append(message);
-      if (!verboseEmbeddedPostgresLogs) {
-        return;
-      }
-      const lines = typeof message === "string"
-        ? message.split(/\r?\n/)
-        : message instanceof Error
-          ? [message.message]
-          : [String(message ?? "")];
-      for (const lineRaw of lines) {
+      const text = typeof message === "string" ? message : message instanceof Error ? message.message : String(message ?? "");
+      for (const lineRaw of text.split(/\r?\n/)) {
         const line = lineRaw.trim();
         if (!line) continue;
-        logger.info({ embeddedPostgresLog: line }, "embedded-postgres");
+        embeddedPostgresLogBuffer.push(line);
+        if (embeddedPostgresLogBuffer.length > EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT) {
+          embeddedPostgresLogBuffer.splice(0, embeddedPostgresLogBuffer.length - EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT);
+        }
+        if (verboseEmbeddedPostgresLogs) {
+          logger.info({ embeddedPostgresLog: line }, "embedded-postgres");
+        }
       }
     };
     const logEmbeddedPostgresFailure = (phase: "initialise" | "start", err: unknown) => {
-      const recentLogs = logBuffer.getRecentLogs();
-      if (recentLogs.length > 0) {
+      if (embeddedPostgresLogBuffer.length > 0) {
         logger.error(
           {
             phase,
-            recentLogs,
+            recentLogs: embeddedPostgresLogBuffer,
             err,
           },
           "Embedded PostgreSQL failed; showing buffered startup logs",
@@ -383,10 +405,7 @@ export async function startServer(): Promise<StartedServer> {
             await embeddedPostgres.initialise();
           } catch (err) {
             logEmbeddedPostgresFailure("initialise", err);
-            throw formatEmbeddedPostgresError(err, {
-              fallbackMessage: `Failed to initialize embedded PostgreSQL cluster in ${dataDir} on port ${port}`,
-              recentLogs: logBuffer.getRecentLogs(),
-            });
+            throw err;
           }
         } else {
           logger.info(`Embedded PostgreSQL cluster already exists (${clusterVersionFile}); skipping init`);
@@ -400,10 +419,7 @@ export async function startServer(): Promise<StartedServer> {
           await embeddedPostgres.start();
         } catch (err) {
           logEmbeddedPostgresFailure("start", err);
-          throw formatEmbeddedPostgresError(err, {
-            fallbackMessage: `Failed to start embedded PostgreSQL on port ${port}`,
-            recentLogs: logBuffer.getRecentLogs(),
-          });
+          throw err;
         }
         embeddedPostgresStartedByThisProcess = true;
       }
@@ -427,7 +443,6 @@ export async function startServer(): Promise<StartedServer> {
     db = createDb(embeddedConnectionString);
     logger.info("Embedded PostgreSQL ready");
     activeDatabaseConnectionString = embeddedConnectionString;
-    resolvedEmbeddedPostgresPort = port;
     startupDbInfo = { mode: "embedded-postgres", dataDir, port };
   }
   
@@ -509,19 +524,6 @@ export async function startServer(): Promise<StartedServer> {
   }
   
   const listenPort = await detectPort(config.port);
-  if (listenPort !== config.port) {
-    config.port = listenPort;
-  }
-  if (resolvedEmbeddedPostgresPort !== null && resolvedEmbeddedPostgresPort !== config.embeddedPostgresPort) {
-    config.embeddedPostgresPort = resolvedEmbeddedPostgresPort;
-  }
-  if (config.authBaseUrlMode === "explicit" && config.authPublicBaseUrl) {
-    config.authPublicBaseUrl = rewriteLocalUrlPort(config.authPublicBaseUrl, listenPort);
-  }
-  maybePersistWorktreeRuntimePorts({
-    serverPort: listenPort,
-    databasePort: resolvedEmbeddedPostgresPort,
-  });
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   const feedback = feedbackService(db as any, {
@@ -540,6 +542,25 @@ export async function startServer(): Promise<StartedServer> {
     companyDeletionEnabled: config.companyDeletionEnabled,
     betterAuthHandler,
     resolveSession,
+    backup: config.databaseBackupEnabled ? {
+      backupDir: config.databaseBackupDir,
+      connectionString: activeDatabaseConnectionString,
+      instanceRoot: resolvePaperclipInstanceRoot(),
+      getScheduler: () => backupSchedulerState,
+      getLastResult: () => lastBackupResult,
+      getLastError: () => lastBackupError,
+      getConfig: () => ({
+        enabled: config.databaseBackupEnabled,
+        intervalMinutes: config.databaseBackupIntervalMinutes,
+        retentionDays: config.databaseBackupRetentionDays,
+        backupDir: config.databaseBackupDir,
+        compression: false,
+        gfsEnabled: false,
+        gfsHourlyCount: 0,
+        gfsDailyCount: 0,
+        gfsWeeklyCount: 0,
+      }),
+    } : undefined,
   });
   const server = createServer(app as unknown as Parameters<typeof createServer>[0]);
   
@@ -573,9 +594,18 @@ export async function startServer(): Promise<StartedServer> {
     .catch((err) => {
       logger.error({ err }, "startup reconciliation of persisted runtime services failed");
     });
-  
-  if (config.heartbeatSchedulerEnabled) {
-    const heartbeat = heartbeatService(db as any);
+
+  void mcpBridgeService.initialize(db as any).catch((err) => {
+    logger.error({ err }, "mcpBridgeService failed to initialize");
+  });
+
+  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    logger.warn(
+      "No LLM API key configured (OPENAI_API_KEY or ANTHROPIC_API_KEY). Retrospective analysis will be unavailable.",
+    );
+  }
+
+  if (config.heartbeatSchedulerEnabled) {    const heartbeat = heartbeatService(db as any);
     const routines = routineService(db as any);
   
     // Reap orphaned running runs at startup while in-memory execution state is empty,
@@ -623,38 +653,81 @@ export async function startServer(): Promise<StartedServer> {
   if (config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;
-  
+
     const runScheduledBackup = async () => {
       if (backupInFlight) {
         logger.warn("Skipping scheduled database backup because a previous backup is still running");
         return;
       }
-  
+
       backupInFlight = true;
       try {
-        const result = await runDatabaseBackup({
+        const instanceRoot = resolvePaperclipInstanceRoot();
+        const result = await runFullBackup({
           connectionString: activeDatabaseConnectionString,
           backupDir: config.databaseBackupDir,
-          retentionDays: config.databaseBackupRetentionDays,
           filenamePrefix: "paperclip",
+          compression: config.databaseBackupCompression,
+          instanceRoot,
+          skillsDir: resolve(instanceRoot, "skills"),
+          projectsDir: resolve(instanceRoot, "projects"),
+          workspacesDir: resolve(instanceRoot, "workspaces"),
+          storageDir: resolve(instanceRoot, "data", "storage"),
+          secretsDir: resolve(instanceRoot, "secrets"),
+          configFile: resolve(instanceRoot, "config.json"),
+          includeFiles: {
+            skills: config.databaseBackupIncludeSkills,
+            projects: config.databaseBackupIncludeProjects,
+            workspaces: config.databaseBackupIncludeWorkspaces,
+            storage: config.databaseBackupIncludeStorage,
+            secrets: config.databaseBackupIncludeSecrets,
+            config: config.databaseBackupIncludeConfig,
+          },
+          gfs: {
+            enabled: config.databaseBackupGfsEnabled,
+            hourlyCount: config.databaseBackupGfsHourlyCount,
+            dailyCount: config.databaseBackupGfsDailyCount,
+            weeklyCount: config.databaseBackupGfsWeeklyCount,
+          },
         });
+        lastBackupResult = {
+          completedAt: new Date(),
+          backupDir: result.backupDir,
+          dbSizeBytes: result.dbSizeBytes,
+          filesSizeBytes: result.filesSizeBytes,
+          totalSizeBytes: result.totalSizeBytes,
+          prunedCount: result.prunedCount,
+          includedDirs: result.includedDirs,
+        };
+        lastBackupError = null;
         logger.info(
           {
-            backupFile: result.backupFile,
-            sizeBytes: result.sizeBytes,
+            backupDir: result.backupDir,
+            dbSizeBytes: result.dbSizeBytes,
+            filesSizeBytes: result.filesSizeBytes,
+            totalSizeBytes: result.totalSizeBytes,
             prunedCount: result.prunedCount,
-            backupDir: config.databaseBackupDir,
-            retentionDays: config.databaseBackupRetentionDays,
+            includedDirs: result.includedDirs,
           },
-          `Automatic database backup complete: ${formatDatabaseBackupResult(result)}`,
+          `Automatic full backup complete`,
         );
       } catch (err) {
+        lastBackupError = {
+          message: err instanceof Error ? err.message : String(err),
+          occurredAt: new Date(),
+        };
         logger.error({ err, backupDir: config.databaseBackupDir }, "Automatic database backup failed");
       } finally {
         backupInFlight = false;
       }
     };
-  
+
+    backupSchedulerState = {
+      intervalMs: backupIntervalMs,
+      isInFlight: () => backupInFlight,
+      runNow: runScheduledBackup,
+    };
+
     logger.info(
       {
         intervalMinutes: config.databaseBackupIntervalMinutes,

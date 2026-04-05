@@ -23,6 +23,8 @@
  */
 
 import type { Db } from "@paperclipai/db";
+import { executionWorkspaces, heartbeatRuns } from "@paperclipai/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type {
   PaperclipPluginManifestV1,
   PluginRecord,
@@ -38,6 +40,9 @@ import {
   type ToolExecutionResult,
 } from "./plugin-tool-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
+import { mcpBridgeService } from "./mcp-bridge.js";
+import { swarmManager } from "./swarm-manager.js";
+import { companyInstaller } from "./company-installer.js";
 import { logger } from "../middleware/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -117,11 +122,10 @@ export interface PluginToolDispatcher {
    * @param filter - Optional filter criteria
    * @returns Array of agent tool descriptors
    */
-  listToolsForAgent(filter?: ToolListFilter): AgentToolDescriptor[];
+   listToolsForAgent(filter?: ToolListFilter): Promise<AgentToolDescriptor[]>;
 
-  /**
-   * Look up a tool by its namespaced name.
-   *
+   /**
+   * Look up a tool by its namespaced name.   *
    * @param namespacedName - e.g. `"acme.linear:search-issues"`
    * @returns The registered tool, or `null` if not found
    */
@@ -385,8 +389,24 @@ export function createPluginToolDispatcher(
       log.info("plugin tool dispatcher torn down");
     },
 
-    listToolsForAgent(filter?: ToolListFilter): AgentToolDescriptor[] {
-      return registry.listTools(filter).map(toAgentDescriptor);
+    async listToolsForAgent(filter?: ToolListFilter): Promise<AgentToolDescriptor[]> {
+      const pluginTools = registry.listTools(filter).map(toAgentDescriptor);
+      
+      // If we are filtering for a specific plugin, don't include MCP tools
+      if (filter?.pluginId) {
+        return pluginTools;
+      }
+
+      const mcpTools = await mcpBridgeService.listTools();
+      const mcpDescriptors: AgentToolDescriptor[] = mcpTools.map((mcp) => ({
+        name: mcp.namespacedName,
+        displayName: mcp.name,
+        description: mcp.description,
+        parametersSchema: mcp.parametersSchema,
+        pluginId: `mcp.${mcp.serverId}`,
+      }));
+
+      return [...pluginTools, ...mcpDescriptors];
     },
 
     getTool(namespacedName: string): RegisteredTool | null {
@@ -406,6 +426,100 @@ export function createPluginToolDispatcher(
         },
         "dispatching tool execution",
       );
+
+      if (namespacedName.startsWith("mcp.")) {
+        const mcpResult = await mcpBridgeService.executeTool(namespacedName, parameters as Record<string, unknown>);
+        const result: ToolExecutionResult = {
+          pluginId: namespacedName.split(":")[0],
+          toolName: namespacedName.split(":")[1],
+          result: {
+            content: JSON.stringify(mcpResult),
+          },
+        };
+        return result;
+      }
+
+      if (namespacedName === "paperclip.swarm:spawn_worker") {
+        const { role, objective } = parameters as { role: string; objective: string };
+
+        let baseCwd = process.cwd();
+        if (db) {
+          const rows = await db
+            .select({ cwd: executionWorkspaces.cwd })
+            .from(executionWorkspaces)
+            .where(
+              and(
+                eq(executionWorkspaces.companyId, runContext.companyId),
+                eq(executionWorkspaces.projectId, runContext.projectId),
+                inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
+              ),
+            )
+            .orderBy(desc(executionWorkspaces.lastUsedAt))
+            .limit(1);
+          const cwd = rows[0]?.cwd;
+          if (cwd) baseCwd = cwd;
+        }
+
+        const swarmResult = await swarmManager.spawnWorker({
+          parentId: runContext.agentId ?? "unknown",
+          role,
+          objective,
+          baseCwd,
+        });
+
+        return {
+          pluginId: "paperclip.swarm",
+          toolName: "spawn_worker",
+          result: {
+            content: `Spawned worker ${swarmResult.workerId} in worktree ${swarmResult.worktreePath} on branch ${swarmResult.branchName}.`,
+          },
+        };
+      }
+
+      if (namespacedName === "paperclip.swarm:activate_skill") {
+        const { skillName } = parameters as { skillName: string };
+        const runId = runContext.runId;
+        if (runId && db) {
+          // Update the run context to include the new skill for the next heartbeat
+          const run = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then(r => r[0]);
+          if (run) {
+            const context = (run.contextSnapshot as Record<string, unknown>) ?? {};
+            const activeSkills = new Set(Array.isArray(context.paperclipActiveSkills) ? context.paperclipActiveSkills : []);
+            activeSkills.add(skillName);
+            context.paperclipActiveSkills = Array.from(activeSkills);
+            
+            await db.update(heartbeatRuns)
+              .set({ contextSnapshot: context, updatedAt: new Date() })
+              .where(eq(heartbeatRuns.id, runId));
+          }
+        }
+
+        return {
+          pluginId: "paperclip.swarm",
+          toolName: "activate_skill",
+          result: {
+            content: `Skill ${skillName} activated. It will be available in the next heartbeat.`,
+          },
+        };
+      }
+
+      if (namespacedName === "paperclip.swarm:hire_company") {
+        const { repoUrl, path: subPath } = parameters as { repoUrl: string; path?: string };
+        const result = await companyInstaller.installFromRepo(db!, undefined, {
+          repoUrl,
+          path: subPath,
+          targetMode: "existing_company",
+          targetCompanyId: runContext.companyId,
+        });
+
+        return {
+          pluginId: "paperclip.swarm",
+          toolName: "hire_company",
+          result: {
+            content: `Successfully hired new agents from ${repoUrl}. New agents: ${result.agents.map(a => a.name).join(", ")}.`,
+          },
+        };
+      }
 
       const result = await registry.executeTool(
         namespacedName,

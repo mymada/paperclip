@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { PluginRecord } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
-import { AlertTriangle, FlaskConical, Plus, Power, Puzzle, Settings, Trash } from "lucide-react";
+import { AlertTriangle, FlaskConical, Package, Plus, Power, Puzzle, Settings, Trash } from "lucide-react";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { pluginsApi } from "@/api/plugins";
@@ -218,9 +218,8 @@ export function PluginManager() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <FlaskConical className="h-5 w-5 text-muted-foreground" />
+          <Package className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-base font-semibold">Available Plugins</h2>
-          <Badge variant="outline">Examples</Badge>
         </div>
 
         {examplesQuery.isLoading ? (
@@ -246,7 +245,11 @@ export function PluginManager() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{example.displayName}</span>
-                        <Badge variant="outline">Example</Badge>
+                        {example.tag === "official" ? (
+                          <Badge variant="outline" className="border-blue-500 text-blue-600">Official</Badge>
+                        ) : (
+                          <Badge variant="outline">Example</Badge>
+                        )}
                         {installedPlugin ? (
                           <Badge
                             variant={installedPlugin.status === "ready" ? "default" : "secondary"}

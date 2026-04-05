@@ -4,7 +4,7 @@ import type { Db } from "@paperclipai/db";
 import { validate } from "../middleware/validate.js";
 import { activityService } from "../services/activity.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
-import { issueService } from "../services/index.js";
+import { heartbeatService, issueService } from "../services/index.js";
 import { sanitizeRecord } from "../redaction.js";
 
 const createActivitySchema = z.object({
@@ -38,6 +38,8 @@ export function activityRoutes(db: Db) {
       agentId: req.query.agentId as string | undefined,
       entityType: req.query.entityType as string | undefined,
       entityId: req.query.entityId as string | undefined,
+      limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
+      offset: req.query.offset ? parseInt(req.query.offset as string, 10) : undefined,
     };
     const result = await svc.list(filters);
     res.json(result);
@@ -80,6 +82,12 @@ export function activityRoutes(db: Db) {
 
   router.get("/heartbeat-runs/:runId/issues", async (req, res) => {
     const runId = req.params.runId as string;
+    const run = await heartbeatService(db).getRun(runId);
+    if (!run) {
+      res.status(404).json({ error: "Heartbeat run not found" });
+      return;
+    }
+    assertCompanyAccess(req, run.companyId);
     const result = await svc.issuesForRun(runId);
     res.json(result);
   });

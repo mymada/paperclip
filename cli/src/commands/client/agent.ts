@@ -35,7 +35,7 @@ interface CreatedAgentKey {
 }
 
 interface SkillsInstallSummary {
-  tool: "codex" | "claude";
+  tool: "codex" | "claude" | "gemini";
   target: string;
   linked: string[];
   removed: string[];
@@ -57,10 +57,17 @@ function claudeSkillsHome(): string {
   return path.join(base, "skills");
 }
 
+function geminiSkillsHome(): string {
+  const fromEnv =
+    process.env.GEMINI_CLI_HOME?.trim() || process.env.GEMINI_HOME?.trim();
+  const base = fromEnv && fromEnv.length > 0 ? fromEnv : path.join(os.homedir(), ".gemini");
+  return path.join(base, "skills");
+}
+
 async function installSkillsForTarget(
   sourceSkillsDir: string,
   targetSkillsDir: string,
-  tool: "codex" | "claude",
+  tool: "codex" | "claude" | "gemini",
 ): Promise<SkillsInstallSummary> {
   const summary: SkillsInstallSummary = {
     tool,
@@ -219,14 +226,14 @@ export function registerAgentCommands(program: Command): void {
     agent
       .command("local-cli")
       .description(
-        "Create an agent API key, install local Paperclip skills for Codex/Claude, and print shell exports",
+        "Create an agent API key, install local Paperclip skills for Codex/Claude/Gemini, and print shell exports",
       )
       .argument("<agentRef>", "Agent ID or shortname/url-key")
       .requiredOption("-C, --company-id <id>", "Company ID")
       .option("--key-name <name>", "API key label", "local-cli")
       .option(
         "--no-install-skills",
-        "Skip installing Paperclip skills into ~/.codex/skills and ~/.claude/skills",
+        "Skip installing Paperclip skills into ~/.codex/skills, ~/.claude/skills and ~/.gemini/skills",
       )
       .action(async (agentRef: string, opts: AgentLocalCliOptions) => {
         try {
@@ -258,6 +265,7 @@ export function registerAgentCommands(program: Command): void {
             installSummaries.push(
               await installSkillsForTarget(skillsDir, codexSkillsHome(), "codex"),
               await installSkillsForTarget(skillsDir, claudeSkillsHome(), "claude"),
+              await installSkillsForTarget(skillsDir, geminiSkillsHome(), "gemini"),
             );
           }
 
@@ -304,7 +312,7 @@ export function registerAgentCommands(program: Command): void {
             }
           }
           console.log("");
-          console.log("# Run this in your shell before launching codex/claude:");
+          console.log("# Run this in your shell before launching codex/claude/gemini:");
           console.log(exportsText);
         } catch (err) {
           handleCommandError(err);

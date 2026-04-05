@@ -1,5 +1,6 @@
 import { isValidElement, useEffect, useId, useState, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
+import DOMPurify from "dompurify";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
@@ -10,6 +11,8 @@ interface MarkdownBodyProps {
   className?: string;
   /** Optional resolver for relative image paths (e.g. within export packages) */
   resolveImageSrc?: (src: string) => string | null;
+  /** Called when a #document-<key> link is clicked — caller handles the preview */
+  onDocumentLinkClick?: (documentKey: string) => void;
 }
 
 let mermaidLoaderPromise: Promise<typeof import("mermaid").default> | null = null;
@@ -57,7 +60,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
         });
         const rendered = await mermaid.render(`paperclip-mermaid-${renderId}`, source);
         if (!active) return;
-        setSvg(rendered.svg);
+        setSvg(DOMPurify.sanitize(rendered.svg));
       })
       .catch((err) => {
         if (!active) return;
@@ -91,7 +94,7 @@ function MermaidDiagramBlock({ source, darkMode }: { source: string; darkMode: b
   );
 }
 
-export function MarkdownBody({ children, className, resolveImageSrc }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, resolveImageSrc, onDocumentLinkClick }: MarkdownBodyProps) {
   const { theme } = useTheme();
   const components: Components = {
     pre: ({ node: _node, children: preChildren, ...preProps }) => {
@@ -120,6 +123,19 @@ export function MarkdownBody({ children, className, resolveImageSrc }: MarkdownB
           >
             {linkChildren}
           </a>
+        );
+      }
+      // #document-<key> links → open preview modal if handler provided
+      if (onDocumentLinkClick && href?.startsWith("#document-")) {
+        const key = href.slice("#document-".length);
+        return (
+          <button
+            type="button"
+            onClick={() => onDocumentLinkClick(key)}
+            className="text-primary underline underline-offset-2 hover:opacity-80 transition-opacity"
+          >
+            {linkChildren}
+          </button>
         );
       }
       return (

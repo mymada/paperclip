@@ -1518,7 +1518,7 @@ export function IssueDetail() {
             currentAssigneeValue={actualAssigneeValue}
             suggestedAssigneeValue={suggestedAssigneeValue}
             mentions={mentionOptions}
-            onInterruptQueued={async (runId) => {
+            onInterruptQueued={async (runId: string) => {
               await interruptQueuedComment.mutateAsync(runId);
             }}
             interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
