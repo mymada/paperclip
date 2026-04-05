@@ -458,51 +458,6 @@ async function resolveLedgerScopeForRun(
   };
 }
 
-type ResumeSessionRow = {
-  sessionParamsJson: Record<string, unknown> | null;
-  sessionDisplayId: string | null;
-  lastRunId: string | null;
-};
-
-export function buildExplicitResumeSessionOverride(input: {
-  resumeFromRunId: string;
-  resumeRunSessionIdBefore: string | null;
-  resumeRunSessionIdAfter: string | null;
-  taskSession: ResumeSessionRow | null;
-  sessionCodec: AdapterSessionCodec;
-}) {
-  const desiredDisplayId = truncateDisplayId(
-    input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore,
-  );
-  const taskSessionParams = normalizeSessionParams(
-    input.sessionCodec.deserialize(input.taskSession?.sessionParamsJson ?? null),
-  );
-  const taskSessionDisplayId = truncateDisplayId(
-    input.taskSession?.sessionDisplayId ??
-      (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(taskSessionParams) : null) ??
-      readNonEmptyString(taskSessionParams?.sessionId),
-  );
-  const canReuseTaskSessionParams =
-    input.taskSession != null &&
-    (
-      input.taskSession.lastRunId === input.resumeFromRunId ||
-      (!!desiredDisplayId && taskSessionDisplayId === desiredDisplayId)
-    );
-  const sessionParams =
-    canReuseTaskSessionParams
-      ? taskSessionParams
-      : desiredDisplayId
-        ? { sessionId: desiredDisplayId }
-        : null;
-  const sessionDisplayId = desiredDisplayId ?? (canReuseTaskSessionParams ? taskSessionDisplayId : null);
-
-  if (!sessionDisplayId && !sessionParams) return null;
-  return {
-    sessionDisplayId,
-    sessionParams,
-  };
-}
-
 function normalizeUsageTotals(usage: UsageSummary | null | undefined): UsageTotals | null {
   if (!usage) return null;
   return {
@@ -739,13 +694,6 @@ export function shouldResetTaskSessionForWake(
   const wakeReason = readNonEmptyString(contextSnapshot?.wakeReason);
   if (wakeReason === "issue_assigned") return true;
   return false;
-}
-
-export function formatRuntimeWorkspaceWarningLog(warning: string) {
-  return {
-    stream: "stdout" as const,
-    chunk: `[paperclip] ${warning}\n`,
-  };
 }
 
 function describeSessionResetReason(
@@ -2033,10 +1981,12 @@ export function heartbeatService(db: Db) {
       if (!finalizedRun) continue;
 
       let retriedRun: typeof heartbeatRuns.$inferSelect | null = null;
+      let queuedRetry = false;
       if (shouldRetry) {
         const agent = await getAgent(run.agentId);
         if (agent) {
           retriedRun = await enqueueProcessLossRetry(finalizedRun, agent, now);
+          if (retriedRun) queuedRetry = true;
         }
       } else {
         await releaseIssueExecutionAndPromote(finalizedRun);
@@ -4331,15 +4281,6 @@ export function heartbeatService(db: Db) {
         .orderBy(desc(heartbeatRuns.startedAt))
         .limit(1);
       return run ?? null;
-    },
-
-    reportRunActivity: async (runId: string) => {
-      return db
-        .update(heartbeatRuns)
-        .set({ errorCode: null, error: null, updatedAt: new Date() })
-        .where(eq(heartbeatRuns.id, runId))
-        .returning()
-        .then((rows) => rows[0] ?? null);
     },
   };
 }
