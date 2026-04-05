@@ -7,6 +7,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { randomBytes } from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import { companyPortabilityService } from "./company-portability.js";
 import { runChildProcess } from "../adapters/utils.js";
@@ -30,7 +31,7 @@ class CompanyInstallerImpl {
    */
   async installFromRepo(db: Db, storage: StorageService | undefined, options: InstallCompanyOptions) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "pcp-install-"));
-    const runId = `install-${Math.random().toString(36).slice(2, 11)}`;
+    const runId = `install-${randomBytes(6).toString("hex")}`;
 
     logger.info(`[company-installer] Installing company from ${options.repoUrl} (ref: ${options.ref ?? "HEAD"})`);
 
