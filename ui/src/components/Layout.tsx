@@ -113,8 +113,14 @@ export function Layout() {
       const fallback = (selectedCompanyId ? companies.find((company) => company.id === selectedCompanyId) : null)
         ?? companies[0]
         ?? null;
-      if (fallback && selectedCompanyId !== fallback.id) {
-        setSelectedCompanyId(fallback.id, { source: "route_sync" });
+
+      if (fallback) {
+        if (selectedCompanyId !== fallback.id) {
+          setSelectedCompanyId(fallback.id, { source: "route_sync" });
+        }
+        // Redirect to the correct company prefix
+        const suffix = location.pathname.replace(/^\/[^/]+/, "");
+        navigate(`/${fallback.issuePrefix}${suffix}${location.search}${location.hash}`, { replace: true });
       }
       return;
     }
