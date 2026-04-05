@@ -344,8 +344,12 @@ export type ResolvedWorkspaceForRun = {
   warnings: string[];
 };
 
-type ProjectWorkspaceCandidate = {
-  id: string;
+type ProjectWorkspaceCandidate = { id: string };
+
+type ResumeSessionRow = {
+  sessionParamsJson: Record<string, unknown> | null;
+  sessionDisplayId: string | null;
+  lastRunId: string | null;
 };
 
 export function prioritizeProjectWorkspaceCandidatesForRun<T extends ProjectWorkspaceCandidate>(
@@ -358,6 +362,37 @@ export function prioritizeProjectWorkspaceCandidatesForRun<T extends ProjectWork
   return [rows[preferredIndex]!, ...rows.slice(0, preferredIndex), ...rows.slice(preferredIndex + 1)];
 }
 
+export function formatRuntimeWorkspaceWarningLog(warning: string) {
+  return { stream: "stdout" as const, chunk: `[paperclip] ${warning}\n` };
+}
+
+export function buildExplicitResumeSessionOverride(input: {
+  resumeFromRunId: string;
+  resumeRunSessionIdBefore: string | null;
+  resumeRunSessionIdAfter: string | null;
+  taskSession: ResumeSessionRow | null;
+  sessionCodec: AdapterSessionCodec;
+}) {
+  const desiredDisplayId = truncateDisplayId(input.resumeRunSessionIdAfter ?? input.resumeRunSessionIdBefore);
+  const taskSessionParams = normalizeSessionParams(
+    input.sessionCodec.deserialize(input.taskSession?.sessionParamsJson ?? null),
+  );
+  const taskSessionDisplayId = truncateDisplayId(
+    input.taskSession?.sessionDisplayId ??
+      (input.sessionCodec.getDisplayId ? input.sessionCodec.getDisplayId(taskSessionParams) : null) ??
+      readNonEmptyString(taskSessionParams?.sessionId),
+  );
+  const canReuseTaskSessionParams =
+    input.taskSession != null &&
+    (input.taskSession.lastRunId === input.resumeFromRunId ||
+      (!!desiredDisplayId && taskSessionDisplayId === desiredDisplayId));
+  const sessionParams = canReuseTaskSessionParams
+    ? taskSessionParams
+    : desiredDisplayId ? { sessionId: desiredDisplayId } : null;
+  const sessionDisplayId = desiredDisplayId ?? (canReuseTaskSessionParams ? taskSessionDisplayId : null);
+  if (!sessionDisplayId && !sessionParams) return null;
+  return { sessionDisplayId, sessionParams };
+}
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
@@ -531,8 +566,32 @@ function formatCount(value: number | null | undefined) {
   return value.toLocaleString("en-US");
 }
 
+// Adapters that manage their own compaction natively — Paperclip should not impose rotation limits by default
+const NATIVE_COMPACTION_ADAPTERS = new Set(["claude_local", "codex_local"]);
+
 export function parseSessionCompactionPolicy(agent: typeof agents.$inferSelect): SessionCompactionPolicy {
-  return resolveSessionCompactionPolicy(agent.adapterType, agent.runtimeConfig).policy;
+  const runtimeConfig = parseObject(agent.runtimeConfig);
+  const heartbeat = parseObject(runtimeConfig.heartbeat);
+  const compaction = parseObject(
+    heartbeat.sessionCompaction ?? heartbeat.sessionRotation ?? runtimeConfig.sessionCompaction,
+  );
+  const supportsSessions = SESSIONED_LOCAL_ADAPTERS.has(agent.adapterType);
+  const nativeCompaction = NATIVE_COMPACTION_ADAPTERS.has(agent.adapterType);
+  const enabled = compaction.enabled === undefined
+    ? supportsSessions
+    : asBoolean(compaction.enabled, supportsSessions);
+
+  // For adapters with native compaction, default limits to 0 (disabled) unless explicitly set
+  const defaultMaxRuns = nativeCompaction ? 0 : 200;
+  const defaultMaxTokens = nativeCompaction ? 0 : 2_000_000;
+  const defaultMaxAge = nativeCompaction ? 0 : 72;
+
+  return {
+    enabled,
+    maxSessionRuns: Math.max(0, Math.floor(asNumber(compaction.maxSessionRuns, defaultMaxRuns))),
+    maxRawInputTokens: Math.max(0, Math.floor(asNumber(compaction.maxRawInputTokens, defaultMaxTokens))),
+    maxSessionAgeHours: Math.max(0, Math.floor(asNumber(compaction.maxSessionAgeHours, defaultMaxAge))),
+  };
 }
 
 export function resolveRuntimeSessionParamsForWorkspace(input: {
@@ -1913,6 +1972,20 @@ export function heartbeatService(db: Db) {
     for (const { run, adapterType } of activeRuns) {
       if (runningProcesses.has(run.id) || activeRunExecutions.has(run.id)) continue;
 
+      // For locally-spawned adapters with a recorded pid, check if the process is still alive
+      if (run.processPid != null) {
+        const pidAlive = isLocalPidAlive(run.processPid);
+        if (pidAlive) {
+          // Process is still running but we lost the in-memory handle - mark as detached warning
+          await setRunStatus(run.id, "running", {
+            error: `Lost in-memory process handle, but child pid ${run.processPid} is still alive`,
+            errorCode: "process_detached",
+          });
+          continue;
+        }
+        // PID is dead - fall through to reaping
+      }
+
       // Apply staleness threshold to avoid false positives
       if (staleThresholdMs > 0) {
         const refTime = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
@@ -1983,7 +2056,9 @@ export function heartbeatService(db: Db) {
       });
 
       await finalizeAgentStatus(run.agentId, "failed");
-      await startNextQueuedRunForAgent(run.agentId);
+      if (!queuedRetry) {
+        await startNextQueuedRunForAgent(run.agentId);
+      }
       runningProcesses.delete(run.id);
       reaped.push(run.id);
     }
@@ -1992,6 +2067,15 @@ export function heartbeatService(db: Db) {
       logger.warn({ reapedCount: reaped.length, runIds: reaped }, "reaped orphaned heartbeat runs");
     }
     return { reaped: reaped.length, runIds: reaped };
+  }
+
+  function isLocalPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function resumeQueuedRuns() {
@@ -4247,6 +4331,15 @@ export function heartbeatService(db: Db) {
         .orderBy(desc(heartbeatRuns.startedAt))
         .limit(1);
       return run ?? null;
+    },
+
+    reportRunActivity: async (runId: string) => {
+      return db
+        .update(heartbeatRuns)
+        .set({ errorCode: null, error: null, updatedAt: new Date() })
+        .where(eq(heartbeatRuns.id, runId))
+        .returning()
+        .then((rows) => rows[0] ?? null);
     },
   };
 }
