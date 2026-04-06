@@ -870,7 +870,7 @@ export function AgentDetail() {
           {/* Overflow menu */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon-xs">
+              <Button variant="ghost" size="icon-xs" aria-label="More actions">
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </PopoverTrigger>
@@ -2131,6 +2131,7 @@ function PromptsTab({
                   variant="outline"
                   className="h-7 w-7"
                   onClick={() => setShowNewFileInput(true)}
+                  aria-label="Create new file"
                 >
                   +
                 </Button>
@@ -2142,6 +2143,7 @@ function PromptsTab({
                   variant="ghost"
                   className="h-7 w-7"
                   onClick={() => setShowFilePanel(false)}
+                  aria-label="Close file panel"
                 >
                   ✕
                 </Button>
@@ -2259,6 +2261,7 @@ function PromptsTab({
                   variant="outline"
                   className="h-7 w-7 shrink-0"
                   onClick={() => setShowFilePanel(true)}
+                  aria-label="Open file panel"
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
                 </Button>
@@ -3996,7 +3999,8 @@ function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }
               variant="ghost"
               size="icon-sm"
               onClick={() => setTokenVisible((v) => !v)}
-              title={tokenVisible ? "Hide" : "Show"}
+              title={tokenVisible ? "Hide token" : "Show token"}
+              aria-label={tokenVisible ? "Hide token" : "Show token"}
             >
               {tokenVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </Button>
@@ -4004,7 +4008,8 @@ function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }
               variant="ghost"
               size="icon-sm"
               onClick={copyToken}
-              title="Copy"
+              title="Copy token"
+              aria-label="Copy token"
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
