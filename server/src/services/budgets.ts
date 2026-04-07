@@ -508,22 +508,22 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
 
   return {
     dashboardStats: async (companyId: string) => {
-      const [[activeIncidentsRow], [pendingApprovalRow], [pausedAgentsRow], [pausedProjectsRow]] =
+      // ⚡ Bolt: Combines separate count queries on `budgetIncidents` into a single query
+      // using conditional aggregations, saving a database round trip.
+      const [[incidentsStatsRow], [pausedAgentsRow], [pausedProjectsRow]] =
         await Promise.all([
           db
-            .select({ count: sql<number>`count(*)` })
+            .select({
+              activeIncidents: sql<number>`count(*)::int`,
+              pendingApprovals: sql<number>`coalesce(sum(case when ${approvals.status} = 'pending' then 1 else 0 end), 0)::int`,
+            })
             .from(budgetIncidents)
-            .where(and(eq(budgetIncidents.companyId, companyId), eq(budgetIncidents.status, "open"))),
-          db
-            .select({ count: sql<number>`count(*)` })
-            .from(budgetIncidents)
-            .innerJoin(approvals, eq(budgetIncidents.approvalId, approvals.id))
+            .leftJoin(approvals, eq(budgetIncidents.approvalId, approvals.id))
             .where(
               and(
                 eq(budgetIncidents.companyId, companyId),
-                eq(budgetIncidents.status, "open"),
-                eq(approvals.status, "pending"),
-              ),
+                eq(budgetIncidents.status, "open")
+              )
             ),
           db
             .select({ count: sql<number>`count(*)` })
@@ -548,8 +548,8 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         ]);
 
       return {
-        activeIncidents: Number(activeIncidentsRow?.count ?? 0),
-        pendingApprovalCount: Number(pendingApprovalRow?.count ?? 0),
+        activeIncidents: Number(incidentsStatsRow?.activeIncidents ?? 0),
+        pendingApprovalCount: Number(incidentsStatsRow?.pendingApprovals ?? 0),
         pausedAgentCount: Number(pausedAgentsRow?.count ?? 0),
         pausedProjectCount: Number(pausedProjectsRow?.count ?? 0),
       };

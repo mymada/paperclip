@@ -10,3 +10,6 @@
 
 **Learning:** Synchronous file system operations (`fs.readFileSync`) in Express route handlers block the Node.js event loop, preventing concurrent requests from being processed until the read completes. This drastically impacts throughput, even for relatively small files. Replacing these with `fs.promises.readFile` allows the event loop to yield and process other events or promises.
 **Action:** Always verify that route handlers interacting with the file system use asynchronous functions (e.g., `fs.promises.readFile`, `fs.promises.readdir`) to ensure maximum concurrency and server responsiveness.
+## 2023-10-27 - Drizzle Conditional Aggregation Gotcha
+**Learning:** When combining multiple COUNT queries into a single query using conditional aggregations (e.g., `SUM(CASE WHEN...)`) with Drizzle ORM, be extremely careful not to accidentally remove filtering conditions from the base `.where()` clause. Pushing conditions entirely into the `SELECT` projection forces the database to scan and `LEFT JOIN` every historical record instead of just the active ones, causing a severe performance regression.
+**Action:** Keep common filtering conditions in the base `.where()` clause. Only use conditional aggregation in the `SELECT` for variables that require *different* conditions than the base set.
