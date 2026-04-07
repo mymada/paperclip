@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ThumbsDown, ThumbsUp } from "lucide-react";
+import { Loader2, ThumbsDown, ThumbsUp } from "lucide-react";
 import { cn } from "../lib/utils";
 
 export function OutputFeedbackButtons({
@@ -169,6 +169,7 @@ export function OutputFeedbackButtons({
                 });
               }}
             >
+              {isSaving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
               {isSaving ? "Saving..." : "Save note"}
             </Button>
           </div>
@@ -233,6 +234,7 @@ export function OutputFeedbackButtons({
                 );
               }}
             >
+              {isSaving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
               {isSaving ? "Saving..." : "Don't allow"}
             </Button>
             <Button
@@ -253,6 +255,7 @@ export function OutputFeedbackButtons({
                 );
               }}
             >
+              {isSaving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
               {isSaving ? "Saving..." : "Always allow"}
             </Button>
           </DialogFooter>
