@@ -870,7 +870,7 @@ export function AgentDetail() {
           {/* Overflow menu */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon-xs">
+              <Button variant="ghost" size="icon-xs" aria-label="More options">
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </PopoverTrigger>
@@ -2130,6 +2130,7 @@ function PromptsTab({
                   size="icon"
                   variant="outline"
                   className="h-7 w-7"
+                  aria-label="New file"
                   onClick={() => setShowNewFileInput(true)}
                 >
                   +
@@ -2141,6 +2142,7 @@ function PromptsTab({
                   size="icon"
                   variant="ghost"
                   className="h-7 w-7"
+                  aria-label="Close file panel"
                   onClick={() => setShowFilePanel(false)}
                 >
                   ✕
@@ -2258,6 +2260,7 @@ function PromptsTab({
                   size="icon"
                   variant="outline"
                   className="h-7 w-7 shrink-0"
+                  aria-label="Open file panel"
                   onClick={() => setShowFilePanel(true)}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
@@ -3997,6 +4000,7 @@ function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }
               size="icon-sm"
               onClick={() => setTokenVisible((v) => !v)}
               title={tokenVisible ? "Hide" : "Show"}
+              aria-label={tokenVisible ? "Hide token" : "Show token"}
             >
               {tokenVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </Button>
@@ -4005,6 +4009,7 @@ function KeysTab({ agentId, companyId }: { agentId: string; companyId?: string }
               size="icon-sm"
               onClick={copyToken}
               title="Copy"
+              aria-label="Copy token"
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
