@@ -26,7 +26,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { History, ListFilter, MessageSquarePlus, Send } from "lucide-react";
+import { History, ListFilter, MessageSquarePlus, Send, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 
 /**
@@ -528,8 +528,13 @@ export function BoardChat() {
                 onClick={handleSend}
                 disabled={!input.trim() || sending}
                 className="shrink-0"
+                aria-label="Send message"
               >
-                <Send className="h-4 w-4" />
+                {sending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
               </Button>
             </div>
           </div>
