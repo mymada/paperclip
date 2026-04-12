@@ -72,12 +72,15 @@ export function healthRoutes(
     let devServer: ReturnType<typeof toDevServerHealthStatus> | undefined;
     if (persistedDevServerStatus) {
       const instanceSettings = instanceSettingsService(db);
-      const experimentalSettings = await instanceSettings.getExperimental();
-      const activeRunCount = await db
-        .select({ count: count() })
-        .from(heartbeatRuns)
-        .where(inArray(heartbeatRuns.status, ["queued", "running"]))
-        .then((rows) => Number(rows[0]?.count ?? 0));
+      // ⚡ Bolt: Execute independent queries concurrently to minimize total latency.
+      const [experimentalSettings, activeRunCount] = await Promise.all([
+        instanceSettings.getExperimental(),
+        db
+          .select({ count: count() })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.status, ["queued", "running"]))
+          .then((rows) => Number(rows[0]?.count ?? 0)),
+      ]);
 
       devServer = toDevServerHealthStatus(persistedDevServerStatus, {
         autoRestartEnabled: experimentalSettings.autoRestartDevServerWhenIdle ?? false,
