@@ -7,3 +7,7 @@
 **Vulnerability:** IDOR (Insecure Direct Object Reference) / Missing Authorization Check in multiple agent chat endpoints (`/agents/:id/chat/stream`, `/agents/:id/chat/canned`, `/agents/:id/chat/generate-artifact`, `/agents/:id/chat/relay`, and `/board/chat/stream`). Users could interact with or perform actions on agents belonging to companies they did not have access to by simply guessing the agent's ID or providing an arbitrary company ID.
 **Learning:** Route handlers fetching specific resources must explicitly check access permissions after retrieving the resource, even if the resource requires a seemingly opaque UUID.
 **Prevention:** Always use the `assertCompanyAccess(req, resource.companyId)` helper immediately after validating the requested resource in any new or modified routes handling company-scoped data.
+## 2024-04-05 - Insecure Random Number Generation in Identifiers
+ **Vulnerability:** The codebase was using `Math.random().toString(36)` to generate pseudo-random identifiers for installation run records (`runId`).
+ **Learning:** While convenient for generating short strings, `Math.random()` in Node.js uses xorshift128+ which is not cryptographically secure and can be predicted if enough outputs are observed. This creates a risk where identifiers like process boundaries or transaction IDs can be guessed or forced into a collision.
+ **Prevention:** Always use `randomBytes(n).toString("hex")` or `randomUUID()` from `node:crypto` for identifiers or nonces where uniqueness or unpredictability holds any security relevance.
