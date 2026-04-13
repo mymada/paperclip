@@ -85,6 +85,7 @@ export function ImageGalleryModal({
                 download={current.originalFilename ?? "image"}
                 className="text-white/50 hover:text-white transition-colors"
                 title="Download"
+                aria-label="Download"
                 onClick={(e) => e.stopPropagation()}
               >
                 <Download className="h-4.5 w-4.5" />
@@ -94,6 +95,7 @@ export function ImageGalleryModal({
                 onClick={() => onOpenChange(false)}
                 className="text-white/50 hover:text-white transition-colors"
                 title="Close"
+                aria-label="Close"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -110,6 +112,7 @@ export function ImageGalleryModal({
                   onClick={goPrev}
                   className="rounded-full bg-white/10 p-3 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
                   title="Previous"
+                  aria-label="Previous"
                 >
                   <ChevronLeft className="h-7 w-7" />
                 </button>
@@ -135,6 +138,7 @@ export function ImageGalleryModal({
                   onClick={goNext}
                   className="rounded-full bg-white/10 p-3 text-white/60 hover:text-white hover:bg-white/20 transition-colors"
                   title="Next"
+                  aria-label="Next"
                 >
                   <ChevronRight className="h-7 w-7" />
                 </button>

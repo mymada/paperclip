@@ -122,6 +122,9 @@ export function ToggleField({
         data-slot="toggle"
         data-testid={toggleTestId}
         type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
         className={cn(
           "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
           checked ? "bg-green-600" : "bg-muted"
@@ -170,6 +173,10 @@ export function ToggleWithNumber({
           {hint && <HintIcon text={hint} />}
         </div>
         <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={label}
           className={cn(
             "relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0",
             checked ? "bg-green-600" : "bg-muted"
