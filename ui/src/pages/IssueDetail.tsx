@@ -1237,6 +1237,7 @@ export function IssueDetail() {
               size="icon-xs"
               onClick={copyIssueToClipboard}
               title="Copy issue as markdown"
+              aria-label="Copy issue as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -1245,6 +1246,7 @@ export function IssueDetail() {
               size="icon-xs"
               onClick={() => setMobilePropsOpen(true)}
               title="Properties"
+              aria-label="Properties"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
@@ -1256,6 +1258,7 @@ export function IssueDetail() {
               size="icon-xs"
               onClick={copyIssueToClipboard}
               title="Copy issue as markdown"
+              aria-label="Copy issue as markdown"
             >
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
             </Button>
@@ -1268,13 +1271,14 @@ export function IssueDetail() {
               )}
               onClick={() => setPanelVisible(true)}
               title="Show properties"
+              aria-label="Open properties panel"
             >
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
 
             <Popover open={moreOpen} onOpenChange={setMoreOpen}>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon-xs" className="shrink-0">
+                <Button variant="ghost" size="icon-xs" className="shrink-0" aria-label="More options">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </PopoverTrigger>
