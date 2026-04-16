@@ -42,12 +42,39 @@ export function healthRoutes(
 
     let bootstrapStatus: "ready" | "bootstrap_pending" = "ready";
     let bootstrapInviteActive = false;
-    if (opts.deploymentMode === "authenticated") {
-      const roleCount = await db
+    let devServer: ReturnType<typeof toDevServerHealthStatus> | undefined;
+
+    const persistedDevServerStatus = readPersistedDevServerStatus();
+    const instanceSettings = instanceSettingsService(db);
+
+    // Fire off all independent DB queries concurrently
+    const roleCountPromise = opts.deploymentMode === "authenticated"
+      ? db
         .select({ count: count() })
         .from(instanceUserRoles)
         .where(sql`${instanceUserRoles.role} = 'instance_admin'`)
-        .then((rows) => Number(rows[0]?.count ?? 0));
+        .then((rows) => Number(rows[0]?.count ?? 0))
+      : Promise.resolve(null);
+
+    const experimentalSettingsPromise = persistedDevServerStatus
+      ? instanceSettings.getExperimental()
+      : Promise.resolve(null);
+
+    const activeRunCountPromise = persistedDevServerStatus
+      ? db
+        .select({ count: count() })
+        .from(heartbeatRuns)
+        .where(inArray(heartbeatRuns.status, ["queued", "running"]))
+        .then((rows) => Number(rows[0]?.count ?? 0))
+      : Promise.resolve(0);
+
+    const [roleCount, experimentalSettings, activeRunCount] = await Promise.all([
+      roleCountPromise,
+      experimentalSettingsPromise,
+      activeRunCountPromise
+    ]);
+
+    if (opts.deploymentMode === "authenticated" && roleCount !== null) {
       bootstrapStatus = roleCount > 0 ? "ready" : "bootstrap_pending";
 
       if (bootstrapStatus === "bootstrap_pending") {
@@ -68,17 +95,7 @@ export function healthRoutes(
       }
     }
 
-    const persistedDevServerStatus = readPersistedDevServerStatus();
-    let devServer: ReturnType<typeof toDevServerHealthStatus> | undefined;
-    if (persistedDevServerStatus) {
-      const instanceSettings = instanceSettingsService(db);
-      const experimentalSettings = await instanceSettings.getExperimental();
-      const activeRunCount = await db
-        .select({ count: count() })
-        .from(heartbeatRuns)
-        .where(inArray(heartbeatRuns.status, ["queued", "running"]))
-        .then((rows) => Number(rows[0]?.count ?? 0));
-
+    if (persistedDevServerStatus && experimentalSettings !== null) {
       devServer = toDevServerHealthStatus(persistedDevServerStatus, {
         autoRestartEnabled: experimentalSettings.autoRestartDevServerWhenIdle ?? false,
         activeRunCount,

@@ -10,3 +10,7 @@
 
 **Learning:** Synchronous file system operations (`fs.readFileSync`) in Express route handlers block the Node.js event loop, preventing concurrent requests from being processed until the read completes. This drastically impacts throughput, even for relatively small files. Replacing these with `fs.promises.readFile` allows the event loop to yield and process other events or promises.
 **Action:** Always verify that route handlers interacting with the file system use asynchronous functions (e.g., `fs.promises.readFile`, `fs.promises.readdir`) to ensure maximum concurrency and server responsiveness.
+
+## 2026-03-31 - [⚡ Concurrent Database Queries in Health Checks]
+**Learning:** Sequential, independent database queries inside frequently-called endpoints like health checks compound to create significant and unnecessary latency. In Express endpoints (like `/health`), awaiting queries sequentially (e.g., `await checkA()`, then `await checkB()`) blocks the subsequent queries despite them having no dependencies on each other.
+**Action:** When handling multiple independent database reads or async operations, always initiate them concurrently and await their resolution using `await Promise.all([queryA, queryB])` to effectively parallelize the work and reduce overall response latency.
