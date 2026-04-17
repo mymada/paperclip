@@ -870,7 +870,7 @@ export function AgentDetail() {
           {/* Overflow menu */}
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon-xs">
+              <Button variant="ghost" size="icon-xs" aria-label="More actions">
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </PopoverTrigger>
@@ -2131,6 +2131,7 @@ function PromptsTab({
                   variant="outline"
                   className="h-7 w-7"
                   onClick={() => setShowNewFileInput(true)}
+                  aria-label="New file"
                 >
                   +
                 </Button>
@@ -2142,6 +2143,7 @@ function PromptsTab({
                   variant="ghost"
                   className="h-7 w-7"
                   onClick={() => setShowFilePanel(false)}
+                  aria-label="Close panel"
                 >
                   ✕
                 </Button>

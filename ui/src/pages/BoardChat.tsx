@@ -528,6 +528,7 @@ export function BoardChat() {
                 onClick={handleSend}
                 disabled={!input.trim() || sending}
                 className="shrink-0"
+                aria-label="Send message"
               >
                 <Send className="h-4 w-4" />
               </Button>
