@@ -5,7 +5,7 @@ import { authApi } from "../api/auth";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { AsciiArtAnimation } from "@/components/AsciiArtAnimation";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 
 type AuthMode = "sign_in" | "sign_up";
 
@@ -147,11 +147,16 @@ export function AuthPage() {
               aria-disabled={!canSubmit || mutation.isPending}
               className={`w-full ${!canSubmit && !mutation.isPending ? "opacity-50" : ""}`}
             >
-              {mutation.isPending
-                ? "Working…"
-                : mode === "sign_in"
-                  ? "Sign In"
-                  : "Create Account"}
+              {mutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Working…
+                </>
+              ) : mode === "sign_in" ? (
+                "Sign In"
+              ) : (
+                "Create Account"
+              )}
             </Button>
           </form>
 
