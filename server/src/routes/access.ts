@@ -1715,22 +1715,25 @@ export function accessRoutes(
           requestedCompanyId: approved.challenge.requestedCompanyId,
           boardApiKeyId: approved.challenge.boardApiKeyId,
         });
-        for (const companyId of companyIds) {
-          await logActivity(db, {
-            companyId,
-            actorType: "user",
-            actorId: userId,
-            action: "board_api_key.created",
-            entityType: "user",
-            entityId: userId,
-            details: {
-              boardApiKeyId: approved.challenge.boardApiKeyId,
-              requestedAccess: approved.challenge.requestedAccess,
-              requestedCompanyId: approved.challenge.requestedCompanyId,
-              challengeId: approved.challenge.id,
-            },
-          });
-        }
+        // ⚡ Bolt: Parallelize independent database inserts to reduce latency.
+        await Promise.all(
+          companyIds.map((companyId) =>
+            logActivity(db, {
+              companyId,
+              actorType: "user",
+              actorId: userId,
+              action: "board_api_key.created",
+              entityType: "user",
+              entityId: userId,
+              details: {
+                boardApiKeyId: approved.challenge.boardApiKeyId,
+                requestedAccess: approved.challenge.requestedAccess,
+                requestedCompanyId: approved.challenge.requestedCompanyId,
+                challengeId: approved.challenge.id,
+              },
+            })
+          )
+        );
       }
 
       res.json({
@@ -1784,20 +1787,23 @@ export function accessRoutes(
       userId: key.userId,
       boardApiKeyId: key.id,
     });
-    for (const companyId of companyIds) {
-      await logActivity(db, {
-        companyId,
-        actorType: "user",
-        actorId: key.userId,
-        action: "board_api_key.revoked",
-        entityType: "user",
-        entityId: key.userId,
-        details: {
-          boardApiKeyId: key.id,
-          revokedVia: "cli_auth_logout",
-        },
-      });
-    }
+    // ⚡ Bolt: Parallelize independent database inserts to reduce latency.
+    await Promise.all(
+      companyIds.map((companyId) =>
+        logActivity(db, {
+          companyId,
+          actorType: "user",
+          actorId: key.userId,
+          action: "board_api_key.revoked",
+          entityType: "user",
+          entityId: key.userId,
+          details: {
+            boardApiKeyId: key.id,
+            revokedVia: "cli_auth_logout",
+          },
+        })
+      )
+    );
     res.json({ revoked: true, keyId: key.id });
   });
 
