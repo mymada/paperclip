@@ -103,6 +103,7 @@ export async function createApp(
   },
 ) {
   const app = express();
+  app.disable("x-powered-by"); // SECURITY: Prevent leaking Express version
 
   if (opts.deploymentMode === "local_trusted") {
     logger.warn(
