@@ -10,3 +10,7 @@
 
 **Learning:** Synchronous file system operations (`fs.readFileSync`) in Express route handlers block the Node.js event loop, preventing concurrent requests from being processed until the read completes. This drastically impacts throughput, even for relatively small files. Replacing these with `fs.promises.readFile` allows the event loop to yield and process other events or promises.
 **Action:** Always verify that route handlers interacting with the file system use asynchronous functions (e.g., `fs.promises.readFile`, `fs.promises.readdir`) to ensure maximum concurrency and server responsiveness.
+
+## 2024-03-31 - Unblocking the Event Loop with Async FS Reads in Backup Routes
+**Learning:** Synchronous file system operations (`readdirSync`, `existsSync`, `statSync`) in Express route handlers block the Node.js event loop. This drastically impacts throughput. Using `fs.promises` equivalent methods inside route handlers solves this problem.
+**Action:** Always verify that route handlers interacting with the file system use asynchronous functions (e.g., `await readdir`, `await stat`, `await access`) to ensure maximum concurrency and server responsiveness.

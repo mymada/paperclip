@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { cp, readFile, rm, unlink } from "node:fs/promises";
+import { cp, readFile, rm, unlink, readdir, stat, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGunzip } from "node:zlib";
@@ -427,23 +427,32 @@ export function backupRoutes(opts: {
   // POST /api/backup/reap — nettoie les backups incomplets/orphelins (Reaper)
   router.post("/reap", async (_req, res, next: NextFunction) => {
     try {
-      if (!existsSync(opts.backupDir)) {
+      // Optimization: Use async fs methods to unblock the Node.js event loop
+      try {
+        await access(opts.backupDir);
+      } catch {
         res.json({ message: "No backup directory exists." });
         return;
       }
 
-      const files = readdirSync(opts.backupDir);
+      const files = await readdir(opts.backupDir);
       const reaped: string[] = [];
 
       for (const file of files) {
         // Les backups temporaires/échoués ont souvent un préfixe ou suffixe spécifique
         // ex: .tmp, .in-progress, ou des dossiers vides sans manifest.json
         const fullPath = join(opts.backupDir, file);
-        const isDir = statSync(fullPath).isDirectory();
+        const s = await stat(fullPath);
+        const isDir = s.isDirectory();
 
         if (isDir) {
           const manifestPath = join(fullPath, "manifest.json");
-          const hasManifest = existsSync(manifestPath);
+          let hasManifest = true;
+          try {
+            await access(manifestPath);
+          } catch {
+            hasManifest = false;
+          }
           
           // Reaper: dossiers de full backup (format: {prefix}-full-{timestamp}) sans manifeste = incomplet/crash
           if (!hasManifest && /-full-\d{8}T\d{6}/.test(file)) {
